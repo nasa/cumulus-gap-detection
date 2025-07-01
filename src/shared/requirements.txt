@@ -1,0 +1,4 @@
+psycopg[binary]==3.2.5
+psycopg[pool]
+requests==2.32.3
+aws-lambda-typing
