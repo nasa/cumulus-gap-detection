@@ -58,7 +58,7 @@ resource "aws_sns_topic_subscription" "report_granules_ingest_subscription" {
 
   endpoint = aws_sqs_queue.gap_detection_ingest_queue.arn
 
-  filter_policy = "{}"
+  filter_policy = jsonencode({ placeholder : ["placeholder"] })
 
   filter_policy_scope = "MessageBody"
 
