@@ -17,8 +17,8 @@ locals {
   execution_url = "${local.base_url}?region=${local.region}#/executions/details"
 
   state_machines = [
-    data.aws_sfn_state_machine.component_metadata_state_machine.name,
-    data.aws_sfn_state_machine.component_cmr_state_machine.name
+    "${var.component_metadata_state_machine_name}",
+    "${var.component_cmr_state_machine_name}"
   ]
   gap_functions = {
     gapUpdate = {
