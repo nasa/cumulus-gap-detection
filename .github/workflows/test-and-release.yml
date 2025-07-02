@@ -6,6 +6,7 @@ on:
         - v*
     branches:
       - main
+      - GESDISCUMU-5118-migrate-gap-dection-codebase-and-template
 jobs:
   create_release:
     # if: contains(github.ref, '/tags/v')
