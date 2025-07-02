@@ -6,7 +6,7 @@ on:
         - v*
     branches:
       - main
-      - https://github.com/nasa/cumulus-gap-detection/tree/GESDISCUMU-5118-migrate-gap-dection-codebase-and-template
+      - GESDISCUMU-5118-migrate-gap-dection-codebase-and-template
 jobs:
   build-unit-tests:
       steps:
