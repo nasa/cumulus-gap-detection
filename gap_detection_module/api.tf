@@ -11,9 +11,18 @@ resource "aws_api_gateway_rest_api" "api" {
 # NGAP takes care of automatically adding a resource policy to the API in their cron job lambda
 resource "aws_api_gateway_rest_api_policy" "initial_api_gateway_policy" {
   rest_api_id = aws_api_gateway_rest_api.api.id
+
   policy = jsonencode({
-    Version   = "2012-10-17"
-    Statement = []
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "NoEffectPlaceholder"
+        Effect    = "Allow"
+        Action    = []
+        Resource  = "*"
+        Principal = "*"
+      }
+    ]
   })
 }
 resource "aws_api_gateway_deployment" "deployment" {
