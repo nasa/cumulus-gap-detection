@@ -18,4 +18,4 @@ jobs:
           - name: Show files
             run: ls -R
           - name: Run packaging script
-            run: ./package_lambdas_and_layers
+            run: ./package_lambdas_and_layers.sh
