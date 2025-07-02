@@ -18,5 +18,5 @@ jobs:
         - name: Get tag version
           id: tag_name
           run: | 
-          echo ::set-output name=SOURCE_TAG::${GITHUB_REF#refs/tags/}
-          echo "SOURCE_TAG is set to: $SOURCE_TAG"
+            echo ::set-output name=SOURCE_TAG::${GITHUB_REF#refs/tags/}
+            echo "SOURCE_TAG is set to: $SOURCE_TAG"
