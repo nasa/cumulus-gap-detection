@@ -6,8 +6,17 @@ on:
         - v*
     branches:
       - main
+      - https://github.com/nasa/cumulus-gap-detection/tree/GESDISCUMU-5118-migrate-gap-dection-codebase-and-template
 jobs:
-  generate_release_artifact:
+  build-unit-tests:
+      steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Make test script executable
+        run: chmod +x test/test.sh
+      - name: Run tests
+        run: test/test.sh
+  generate-release-artifact:
     if: contains(github.ref, '/tags/v')
     runs-on: ubuntu-latest
     outputs:
@@ -35,7 +44,7 @@ jobs:
           name: release-zip
           path: ${{ steps.set_output.outputs.zip_name }}
   upload-release:
-    needs: generate_release_artifact
+    needs: generate-release-artifact
     runs-on: ubuntu-latest
 
     steps:
