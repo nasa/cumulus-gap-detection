@@ -9,7 +9,8 @@ on:
       - GESDISCUMU-5118-migrate-gap-dection-codebase-and-template
 jobs:
   create_release:
-    # if: contains(github.ref, '/tags/v')
+    # needs: build
+    if: contains(github.ref, '/tags/v')
     runs-on: ubuntu-latest
     strategy:
       matrix:
