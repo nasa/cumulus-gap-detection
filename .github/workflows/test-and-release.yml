@@ -25,7 +25,7 @@ jobs:
       - name: Find and upload the zip
         id: set_output
         run: |
-          ZIP_NAME=$(find . -name '*.zip' | head -n 1)
+          ZIP_NAME=$(find . -name 'gesdisc_cumulus_gap_detection*.zip' | head -n 1)
           echo "Found package: $ZIP_NAME"
           echo "zip_name=$ZIP_NAME" >> $GITHUB_OUTPUT
 
