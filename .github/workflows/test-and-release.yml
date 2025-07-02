@@ -15,5 +15,7 @@ jobs:
     steps:
           - name: Checkout code
             uses: actions/checkout@v4
+          - name: Show files
+            run: ls -R
           - name: Run packaging script
             run: ./package_lambdas_and_layers
