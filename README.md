@@ -47,4 +47,4 @@ This will create tables and indexes required before invoking API endpoints.
 
 ## Additional Notes
 
-Calling the gapConfig endpoint against large collections greater than 1 million granules ` may result in API GATEWAY timeouts therefore direct invocation of the gapConfig lambda or by running the script `???` will need to be done.
+Calling the gapConfig endpoint against large collections greater than 1 million granules may result in API GATEWAY timeouts. If this collection exceeds the threshhold then please follow instructions under gap_detection_operations. 
