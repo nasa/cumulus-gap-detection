@@ -7,7 +7,9 @@ The primary way to install this module is to reference a stable github release. 
 
 ```hcl
 module "gesdisc-cumulus-gap-detection" {
-   source      = "https://github.com/nasa/official_public_repo/releases/download/v1.0.0/gesdisc_cumulus_gap_detection_06-03.zip"
+   source      = "https://github.com/nasa/cumulus-gap-detection/releases/download/alpha-v1.0.0/gesdisc_cumulus_gap_detection_07-02.zip"
+
+   ## Required parameters
    DEPLOY_NAME = var.DEPLOY_NAME # Deployment name used as a prefix for gap detection resources
    vpc_id = data.aws_vpc.application_vpcs.id # Associates security group names with a specific VPC id
    report_granules_topic_arn = data.terraform_remote_state.cumulus.outputs.report_granules_sns_topic_arn # Cumulus module output for report granules arn
