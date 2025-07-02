@@ -6,16 +6,50 @@ on:
         - v*
     branches:
       - main
-      - GESDISCUMU-5118-migrate-gap-dection-codebase-and-template
 jobs:
-  create_release:
-    # needs: build
-    # if: contains(github.ref, '/tags/v')
+  generate_release_artifact:
+    if: contains(github.ref, '/tags/v')
     runs-on: ubuntu-latest
+    outputs:
+      zip_name: ${{ steps.set_output.outputs.zip_name }}
     steps:
-          - name: Checkout code
-            uses: actions/checkout@v4
-          - name: Show files
-            run: ls -R
-          - name: Run packaging script
-            run: ./package_lambdas_and_layers.sh
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Make script executable
+        run: chmod +x ./generate_release_artifact.sh
+
+      - name: Package source code and layers and generate a release
+        run: ./generate_release_artifact.sh
+
+      - name: Find and upload the zip
+        id: set_output
+        run: |
+          ZIP_NAME=$(find . -name '*.zip' | head -n 1)
+          echo "Found package: $ZIP_NAME"
+          echo "zip_name=$ZIP_NAME" >> $GITHUB_OUTPUT
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-zip
+          path: ${{ steps.set_output.outputs.zip_name }}
+  upload-release:
+    needs: generate_release_artifact
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download ZIP artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-zip
+          path: dist
+
+      - name: Upload GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          files: dist/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
