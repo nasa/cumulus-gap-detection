@@ -7,7 +7,7 @@ The primary way to install this module is to reference a stable github release. 
 
 ```hcl
 module "gesdisc-cumulus-gap-detection" {
-   source      = "https://github.com/nasa/cumulus-gap-detection/releases/download/alpha-v1.0.0/gesdisc_cumulus_gap_detection_07-02.zip"
+   source      = "https://github.com/nasa/cumulus-gap-detection/releases/download/v1.0.0/gesdisc_cumulus_gap_detection_07-02.zip"
 
    ## Required parameters
    DEPLOY_NAME = var.DEPLOY_NAME # Deployment name used as a prefix for gap detection resources
@@ -46,6 +46,26 @@ aws lambda invoke \
 ```
 
 This will create tables and indexes required before invoking API endpoints.
+
+## Outputs
+
+DEPLOY_NAME – The deployment name used as a prefix for all gap detection resources. Useful for identifying resources across environments.
+
+api_gateway_id – The ID of the deployed API Gateway. This can be referenced by other services needing to interact with the Temporal Gap API.
+
+report_granules_deletion_subscription_arn – ARN of the SNS subscription for granule deletion.
+
+report_granules_ingest_subscription_arn – ARN of the SNS subscription for granule ingest.
+
+rds_cluster_arn – The ARN of the RDS cluster backing the system.
+
+rds_endpoint – The cluster’s writer endpoint.
+
+admin_db_login_secret_arn – ARN of the Secrets Manager secret holding admin DB credentials.
+
+lambda_function_arns – A map of all deployed Lambda function ARNs used for gap detection, keyed by function name.
+
+
 
 ## Additional Notes
 
