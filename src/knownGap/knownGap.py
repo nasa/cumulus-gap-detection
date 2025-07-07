@@ -74,6 +74,7 @@ def get_known_gaps(cid, start, end, conn):
 
         return gaps
 
+# TODO Clarify overlap conflict behavior
 def add_reasons(reasons_data, conn):
     with conn.cursor() as cur:
         for idx, reason_obj in enumerate(reasons_data):
@@ -90,8 +91,6 @@ def add_reasons(reasons_data, conn):
            cur.execute("""
                INSERT INTO reasons (collection_id, start_ts, end_ts, reason)
                VALUES (%s, %s, %s, %s)
-               ON CONFLICT (collection_id, start_ts, end_ts) 
-               DO UPDATE SET reason = EXCLUDED.reason
            """, (collection_id, start_dt, end_dt, reason))
                 
         conn.commit()
