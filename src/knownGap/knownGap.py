@@ -48,6 +48,10 @@ def parse_event(event: Dict[str, Any]) -> Tuple[str, str, str, str]:
     return cid, start, end, reason
 
 
+# TODO Clarify behavior when multiple reasons span same gap
+# Currently, the same underlying data gap will be repeated for each reason it's covered by
+# Gaps are only considered covered if covered completely by a single reason. Gaps covered completely
+#    by multiple reasons are considered uncovered and will be retruned in full
 def get_known_gaps(cid: str, start: str, end: str, conn: Any) -> List[Dict[str, Any]]:
     """
     Gets all gaps that fall within the specified time range for a collection.

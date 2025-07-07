@@ -99,7 +99,7 @@ def get_db_connection(retry_count=3):
 
     for attempt in range(retry_count):
         try:
-            conn = pool.getconn(timeout=10)  
+            conn = pool.getconn(timeout=10)
 
             # Validate connection is usable
             with conn.cursor() as cur:
@@ -138,64 +138,85 @@ def get_db_connection(retry_count=3):
                 )
                 raise
 
+
 def sanitize_versionid(versionid) -> str:
     """
     Converts a collection ID by replacing '.' with '_'.
-    
+
     Args:
         versionid (str): The version ID to sanitize.
-    
+
     Returns:
         str: The sanitized version ID.
     """
-    return versionid.replace('.', '_')
+    return versionid.replace(".", "_")
+
 
 def get_granule_gap(shortname: str, versionid: str) -> int:
     """
     Fetches the granule gap value from DynamoDB based on shortname and version ID.
-    
+
     Args:
         shortname (str): The collection shortname.
         versionid (str): The collection ID.
-    
+
     Returns:
         int: The granule gap value in seconds, or 0 if not found.
-    
+
     Raises:
         ClientError: If there is an issue retrieving data from DynamoDB.
     """
-    dynamodb = boto3.resource('dynamodb', region_name=os.environ.get('AWS_REGION', 'us-west-2'))
-    table_name = os.environ['TOLERANCE_TABLE']
+    dynamodb = boto3.resource(
+        "dynamodb", region_name=os.environ.get("AWS_REGION", "us-west-2")
+    )
+    table_name = os.environ["TOLERANCE_TABLE"]
     table = dynamodb.Table(table_name)
 
-    logger.info(f"Querying DynamoDB with shortname='{shortname}', versionid='{versionid}'")
+    logger.info(
+        f"Querying DynamoDB with shortname='{shortname}', versionid='{versionid}'"
+    )
 
     try:
-        response = table.get_item(Key={'shortname': shortname, 'versionid': versionid})
+        response = table.get_item(Key={"shortname": shortname, "versionid": versionid})
         logger.info(f"DynamoDB Response: {response}")
 
-        return int(response['Item']['granulegap']) if 'Item' in response and 'granulegap' in response['Item'] else 0
+        return (
+            int(response["Item"]["granulegap"])
+            if "Item" in response and "granulegap" in response["Item"]
+            else 0
+        )
 
     except Exception as e:
         logger.error(f"Error fetching granulegap from DynamoDB: {e}")
         raise e
 
-def fetch_time_gaps(shortname, versionid, granulegap, cursor, knownCheck=False, startDate=None, endDate=None):
+
+def fetch_time_gaps(
+    shortname,
+    versionid,
+    granulegap,
+    cursor,
+    knownCheck=False,
+    startDate=None,
+    endDate=None,
+):
     """
     Fetches time gaps from the database table sorted by start_ts.
-    
+
     Args:
         shortname (str): The collection shortname.
         versionid (str): The collection ID.
         cursor (psycopg2.cursor): The PostgreSQL cursor object.
         granulegap (int): The granule gap value in seconds.
         knownCheck (bool): Condition whether we filter out known gaps
-    
+
     Returns:
         list: A list of tuples containing (start_ts, end_ts).
     """
-    collection_id = f'{shortname}___{sanitize_versionid(versionid)}'
-    logger.info(f"Fetching time gaps for {collection_id} with granule gap > {granulegap} seconds")
+    collection_id = f"{shortname}___{sanitize_versionid(versionid)}"
+    logger.info(
+        f"Fetching time gaps for {collection_id} with granule gap > {granulegap} seconds"
+    )
 
     query = """
         SELECT start_ts, end_ts 
@@ -228,14 +249,15 @@ def fetch_time_gaps(shortname, versionid, granulegap, cursor, knownCheck=False, 
 
     return rows
 
+
 def check_gap_config(collection_id: str, cursor) -> bool:
     """
     Checks granule config table to see if collection has been initialized for gap detection
-    
+
     Args:
         collection_id (str): The collection ID with sanitized version ID
         cursor (str): The postgres SQL cursor object
-    
+
     Returns:
         bool: Returns whether object exists in gap config table
     """
