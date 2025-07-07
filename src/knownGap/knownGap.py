@@ -1,7 +1,7 @@
 import json
 import logging
-from typing import Dict, Any
-from aws_lambda_typing import context as Context, events
+from typing import List, Tuple, Dict, Any
+from aws_lambda_typing import context as Context
 import traceback
 from dateutil.parser import parse as parse_datetime
 from datetime import datetime
@@ -99,9 +99,7 @@ def add_reasons(reasons_data: List[Dict[str, Any]], conn: Any) -> None:
         conn.commit()
 
 
-def lambda_handler(
-    event: events.APIGatewayProxyEvent, context: Context
-) -> Dict[str, Any]:
+def lambda_handler(event: Dict[str, Any], context: Context) -> Dict[str, Any]:
     """Main event handler
 
     Args:
