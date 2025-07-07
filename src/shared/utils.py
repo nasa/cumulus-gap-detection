@@ -226,7 +226,14 @@ def fetch_time_gaps(
     """
 
     if knownCheck:
-        query += " AND reason IS NULL"
+        query += """
+        AND NOT EXISTS (
+            SELECT 1 FROM reasons r 
+            WHERE r.collection_id = gaps.collection_id 
+            -- @> is range containment operator
+            AND tsrange(r.start_ts, r.end_ts) @> tsrange(gaps.start_ts, gaps.end_ts)
+        )"""
+    
     if startDate:
         query += " AND start_ts > %s"
     if endDate:
