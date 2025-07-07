@@ -51,23 +51,18 @@ def get_known_gaps(cid, start, end, conn):
     with conn.cursor() as cur:
         cur.execute(
             """
-            WITH reason_ranges AS (
-                SELECT collection_id, start_ts, end_ts, reason
-                FROM reasons 
-                WHERE collection_id = %s
-                AND tsrange(start_ts, end_ts) && tsrange(%s, %s)
-            )
             SELECT g.gap_id, g.collection_id, g.start_ts, g.end_ts, r.reason
             FROM gaps g
-            JOIN reason_ranges r ON (
+            LEFT JOIN reasons r ON (
                 g.collection_id = r.collection_id 
                 AND tsrange(g.start_ts, g.end_ts) && tsrange(r.start_ts, r.end_ts)
             )
-            ORDER BY g.start_ts
-        """,
+            WHERE g.collection_id = %s
+            AND tsrange(g.start_ts, g.end_ts) && tsrange(%s, %s)
+            ORDER BY g.start_ts        
+            """,
             (cid, start, end),
         )
-
 
         columns = ["gap_id", "collection_id", "start_ts", "end_ts", "reason"]
         gaps = [dict(zip(columns, row)) for row in cur.fetchall()]
@@ -136,8 +131,13 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
                     logger.error(f"Invalid request: {str(e)}")
                     return build_response(400, {"message": f"Bad Request: {str(e)}"})
 
-                gaps = get_known_gaps(cid, start, end, conn)
-                return build_response(200, {"gaps": gaps})
+                try:
+                    gaps = get_known_gaps(cid, start, end, conn)
+                    return build_response(200, {"gaps": gaps})
+                except Exception as e:
+                    logger.error(f"Server error: {str(e)}")
+                    logger.error(traceback.format_exc())
+                    return build_response(500, {"message": f"Server error: {str(e)}"})
 
             else:
                 return build_response(
