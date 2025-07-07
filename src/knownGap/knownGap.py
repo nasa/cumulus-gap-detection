@@ -1,14 +1,15 @@
-import boto3
 import json
-import os
 import logging
 from typing import Dict, Any
-from psycopg import errors as psycopgErrors
 from aws_lambda_typing import context as Context, events
 import traceback
-from utils import get_db_connection, validate_environment_variables, sanitize_versionid, check_gap_config
+from utils import (
+    get_db_connection,
+    validate_environment_variables,
+    sanitize_versionid,
+    check_gap_config,
+)
 from dateutil.parser import parse as parse_datetime
-import jsonschema
 from datetime import datetime
 
 logger = logging.getLogger()
@@ -23,13 +24,15 @@ class DateTimeEncoder(json.JSONEncoder):
             return obj.isoformat()
         return super().default(obj)
 
-def build_response(status_code: int, body: any) -> dict[str, any]:
+
+def build_response(status_code: int, body: Any) -> Dict[str, Any]:
     return {
         "statusCode": status_code,
         "body": json.dumps(body, cls=DateTimeEncoder),
     }
 
-def parse_event(event):
+
+def parse_event(event: Dict[str, Any]) -> Tuple[str, str, str, str]:
     cid = start = end = reason = ""
     params = event.get("queryStringParameters", {}) or {}
     collection_name = params.get("short_name")
@@ -44,7 +47,8 @@ def parse_event(event):
         raise Exception("Error: `short_name` and `version` are required")
     return cid, start, end, reason
 
-def get_known_gaps(cid, start, end, conn):
+
+def get_known_gaps(cid: str, start: str, end: str, conn: Any) -> List[Dict[str, Any]]:
     """
     Gets all gaps that fall within the specified time range for a collection.
     """
@@ -69,28 +73,35 @@ def get_known_gaps(cid, start, end, conn):
 
         return gaps
 
+
 # TODO Clarify overlap conflict behavior
-def add_reasons(reasons_data, conn):
+def add_reasons(reasons_data: List[Dict[str, Any]], conn: Any) -> None:
     with conn.cursor() as cur:
         for idx, reason_obj in enumerate(reasons_data):
-           shortname = reason_obj['shortname']
-           version = reason_obj['version']
-           start_ts = reason_obj['start_ts']
-           end_ts = reason_obj['end_ts']
-           reason = reason_obj['reason']
-           
-           collection_id = f"{shortname}___{sanitize_versionid(version)}"
-           start_dt = parse_datetime(start_ts)
-           end_dt = parse_datetime(end_ts)
-           
-           cur.execute("""
+            shortname = reason_obj["shortname"]
+            version = reason_obj["version"]
+            start_ts = reason_obj["start_ts"]
+            end_ts = reason_obj["end_ts"]
+            reason = reason_obj["reason"]
+
+            collection_id = f"{shortname}___{sanitize_versionid(version)}"
+            start_dt = parse_datetime(start_ts)
+            end_dt = parse_datetime(end_ts)
+
+            cur.execute(
+                """
                INSERT INTO reasons (collection_id, start_ts, end_ts, reason)
                VALUES (%s, %s, %s, %s)
-           """, (collection_id, start_dt, end_dt, reason))
-                
+           """,
+                (collection_id, start_dt, end_dt, reason),
+            )
+
         conn.commit()
-    
-def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
+
+
+def lambda_handler(
+    event: events.APIGatewayProxyEvent, context: Context
+) -> Dict[str, Any]:
     """Main event handler
 
     Args:
@@ -114,10 +125,14 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
                 except Exception as e:
                     logger.error(f"Invalid request: {str(e)}")
                     logger.error(traceback.format_exc())
-                    return build_response(400, {"message": f"Invalid request: {str(e)}"})
+                    return build_response(
+                        400, {"message": f"Invalid request: {str(e)}"}
+                    )
                 try:
                     add_reasons(payload, conn)
-                    return build_response(201, {"message": f"Sucessfully added reasons for: {payload}"})
+                    return build_response(
+                        201, {"message": f"Sucessfully added reasons for: {payload}"}
+                    )
                 except Exception as e:
                     logger.error(f"Server error: {str(e)}")
                     logger.error(traceback.format_exc())
