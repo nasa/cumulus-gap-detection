@@ -3,14 +3,14 @@ import logging
 from typing import Dict, Any
 from aws_lambda_typing import context as Context, events
 import traceback
+from dateutil.parser import parse as parse_datetime
+from datetime import datetime
 from utils import (
     get_db_connection,
     validate_environment_variables,
     sanitize_versionid,
     check_gap_config,
 )
-from dateutil.parser import parse as parse_datetime
-from datetime import datetime
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
