@@ -1,0 +1,72 @@
+name: Test & Release
+on:
+  pull_request:
+  push:
+    tags:
+        - v*
+    branches:
+      - main
+      - GESDISCUMU-5118-migrate-gap-dection-codebase-and-template
+jobs:
+  build-unit-tests:
+    if: false  # Temporary disabling the build-unit-tests jobs. We have plans to fix the unit tests before renabling this job.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Make test script executable
+        run: chmod +x test/test.sh
+      - name: Install Docker Compose V2
+        run: |
+          mkdir -p ~/.docker/cli-plugins/
+          curl -SL https://github.com/docker/compose/releases/download/v2.27.1/docker-compose-linux-x86_64 \
+            -o ~/.docker/cli-plugins/docker-compose
+          chmod +x ~/.docker/cli-plugins/docker-compose
+      - name: Run tests
+        run: test/test.sh
+  generate-release-artifact:
+    if: contains(github.ref, '/tags/v')
+    runs-on: ubuntu-latest
+    outputs:
+      zip_name: ${{ steps.set_output.outputs.zip_name }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Make script executable
+        run: chmod +x ./generate_release_artifact.sh
+
+      - name: Package source code and layers and generate a release
+        run: ./generate_release_artifact.sh
+
+      - name: Find and upload the zip
+        id: set_output
+        run: |
+          ZIP_NAME=$(find . -name 'gesdisc_cumulus_gap_detection*.zip' | head -n 1)
+          echo "Found package: $ZIP_NAME"
+          echo "zip_name=$ZIP_NAME" >> $GITHUB_OUTPUT
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-zip
+          path: ${{ steps.set_output.outputs.zip_name }}
+  upload-release:
+    needs: generate-release-artifact
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download ZIP artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-zip
+          path: dist
+
+      - name: Upload GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          files: dist/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

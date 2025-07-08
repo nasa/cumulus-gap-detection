@@ -1,0 +1,42 @@
+services:
+  postgres:
+    image: postgres:14
+    environment:
+      POSTGRES_DB: testdb
+      POSTGRES_USER: testuser
+      POSTGRES_PASSWORD: testpass
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U testuser -d testdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+  test:
+    build:
+      context: ..
+      dockerfile: test/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      RDS_SECRET: test-secret
+      AWS_REGION: test-region
+      RDS_PROXY_HOST: postgres
+      CMR_ENV: PROD
+      MIGRATION_STREAM_COMPILER_LAMBDA: test-lambda
+      GAP_REPORT_BUCKET: test-bucket
+      SUBSCRIPTION_ARN: test-arn
+      TOLERANCE_TABLE_NAME: test-table
+    volumes:
+      - pip_cache:/root/.cache/pip
+    command: >
+      bash -c "
+        mkdir -p /app/utils &&
+        ln -sf /app/src/shared/utils.py /app/utils/__init__.py &&
+        PYTHONPATH=. pytest -s test/unit/ -v --cov=src --cov-report=term-missing --log-cli-level=INFO --no-cov-on-fail
+      "
+    tty: true
+volumes:
+  postgres_data:
+  pip_cache:

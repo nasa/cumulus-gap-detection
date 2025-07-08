@@ -1,0 +1,120 @@
+openapi: 3.0.1
+info:
+  title: "${DEPLOY_NAME}-TemporalGapAPI"
+  description: "Temporal Gap API"
+  version: "1.0.0"
+paths:
+  /gapConfig:
+    post:
+      x-amazon-apigateway-integration:
+        uri: "${lambda_invoke_arns.gapConfig}"
+        httpMethod: "POST"
+        type: "AWS_PROXY"
+      responses:
+        "200":
+          description: "200 response"
+  /getTimeGaps:
+    get:
+      parameters:
+        - name: "short_name"
+          in: "query"
+          required: true
+          schema:
+            type: "string"
+        - name: "version"
+          in: "query"
+          required: true
+          schema:
+            type: "string"
+        - name: "knownGap"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+        - name: "tolerance"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+        - name: "startDate"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+        - name: "endDate"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+      x-amazon-apigateway-integration:
+        uri: "${lambda_invoke_arns.getTimeGaps}"
+        httpMethod: "POST"
+        type: "AWS_PROXY"
+        requestParameters:
+          "integration.request.querystring.short_name": "method.request.querystring.short_name"
+          "integration.request.querystring.version": "method.request.querystring.version"
+          "integration.request.querystring.knownGap": "method.request.querystring.knownGap"
+          "integration.request.querystring.tolerance": "method.request.querystring.tolerance"
+          "integration.request.querystring.startdate": "method.request.querystring.startDate"
+          "integration.request.querystring.enddate": "method.request.querystring.endDate"
+      responses:
+        "200":
+          description: "200 response"
+  /knownGap:
+    get:
+      parameters:
+        - name: "short_name"
+          in: "query"
+          required: true
+          schema:
+            type: "string"
+        - name: "version"
+          in: "query"
+          required: true
+          schema:
+            type: "string"
+        - name: "startDate"
+          in: "query"
+          required: true
+          schema:
+            type: "string"
+        - name: "endDate"
+          in: "query"
+          required: true
+          schema:
+            type: "string"
+      x-amazon-apigateway-integration:
+        uri: "${lambda_invoke_arns.knownGap}"
+        httpMethod: "POST"
+        type: "AWS_PROXY"
+      responses:
+        "200":
+          description: "200 response"
+    put:
+      x-amazon-apigateway-integration:
+        uri: "${lambda_invoke_arns.knownGap}"
+        httpMethod: "POST"
+        type: "AWS_PROXY"
+      responses:
+        "200":
+          description: "200 response"
+  /getGapReport:
+    get:
+      parameters:
+        - name: "short_name"
+          in: "query"
+          required: true
+          schema:
+            type: "string"
+        - name: "version"
+          in: "query"
+          required: true
+          schema:
+            type: "string"
+      x-amazon-apigateway-integration:
+        uri: "${lambda_invoke_arns.getGapReport}"
+        httpMethod: "POST"
+        type: "AWS_PROXY"
+      responses:
+        "200":
+          description: "200 response"

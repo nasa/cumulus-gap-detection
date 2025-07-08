@@ -1,0 +1,13 @@
+psycopg
+pytest==8.3.4
+pytest-cov==6.0.0
+psycopg[binary]==3.2.5
+psycopg[pool]
+aws-lambda-typing
+requests==2.32.3
+moto
+python-cmr
+pytest-mock
+jsonschema==4.23.0
+aiohttp
+aioboto3
