@@ -101,7 +101,7 @@ locals {
   # Filter functions that have dependency archives
   functions_with_deps = {
     for k, v in local.gap_functions : k => v
-    if fileexists("artifacts/layers/${k}-deps.zip")
+    if fileexists("${path.module}/artifacts/layers/${k}-deps.zip")
   }
 
   # List of functions that need API Gateway permissions

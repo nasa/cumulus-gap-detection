@@ -33,16 +33,16 @@ resource "aws_lambda_function" "gap_functions" {
 
 resource "aws_s3_object" "function_deps" {
   for_each    = local.functions_with_deps
-  bucket      = aws_s3_bucket.artifacts_bucket
+  bucket      = aws_s3_bucket.artifacts_bucket.bucket
   key         = "${each.key}-deps.zip"
-  source      = "artifacts/layers/${each.key}-deps.zip"
-  source_hash = filemd5("artifacts/layers/${each.key}-deps.zip")
+  source      = "${path.module}/artifacts/layers/${each.key}-deps.zip"
+  source_hash = filemd5("${path.module}/artifacts/layers/${each.key}-deps.zip")
 }
 
 resource "aws_lambda_layer_version" "function_layers" {
   for_each            = local.functions_with_deps
   layer_name          = "${var.DEPLOY_NAME}-${each.key}_layer"
-  s3_bucket           = aws_s3_bucket.artifacts_bucket
+  s3_bucket           = aws_s3_bucket.artifacts_bucket.bucket
   s3_key              = aws_s3_object.function_deps[each.key].key
   source_code_hash    = filebase64sha256("${path.module}/artifacts/layers/${each.key}-deps.zip")
   compatible_runtimes = ["python3.13"]
