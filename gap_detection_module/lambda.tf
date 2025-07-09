@@ -35,8 +35,8 @@ resource "aws_s3_object" "function_deps" {
   for_each    = local.functions_with_deps
   bucket      = aws_s3_bucket.artifacts_bucket
   key         = "${each.key}-deps.zip"
-  source      = "artifacts/layers/${each.key}-deps.zip"
-  source_hash = filemd5("artifacts/layers/${each.key}-deps.zip")
+  source      = "${path.module}/artifacts/layers/${each.key}-deps.zip"
+  source_hash = filemd5("${path.module}/artifacts/layers/${each.key}-deps.zip")
 }
 
 resource "aws_lambda_layer_version" "function_layers" {
