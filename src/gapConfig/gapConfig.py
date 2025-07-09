@@ -342,7 +342,6 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
             "RDS_SECRET",
             "RDS_PROXY_HOST",
             "CMR_ENV",
-            "SUBSCRIPTION_ARN",
             "MIGRATION_STREAM_COMPILER_LAMBDA",
             "TOLERANCE_TABLE_NAME",
         ]
