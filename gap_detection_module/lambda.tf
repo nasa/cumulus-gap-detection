@@ -33,7 +33,7 @@ resource "aws_lambda_function" "gap_functions" {
 
 resource "aws_s3_object" "function_deps" {
   for_each    = local.functions_with_deps
-  bucket      = aws_s3_bucket.artifacts_bucket
+  bucket      = aws_s3_bucket.artifacts_bucket.bucket
   key         = "${each.key}-deps.zip"
   source      = "${path.module}/artifacts/layers/${each.key}-deps.zip"
   source_hash = filemd5("${path.module}/artifacts/layers/${each.key}-deps.zip")
