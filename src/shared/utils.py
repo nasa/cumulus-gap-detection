@@ -213,40 +213,66 @@ def fetch_time_gaps(
     Returns:
         list: A list of tuples containing (start_ts, end_ts).
     """
+    # Build base_query based on params
     collection_id = f"{shortname}___{sanitize_versionid(versionid)}"
-    logger.info(
-        f"Fetching time gaps for {collection_id} with granule gap > {granulegap} seconds"
+    
+    params = [collection_id, startDate, endDate, granulegap]
+    known_filter = "AND r.reason IS NULL" if knownCheck else ""
+    
+    query = f"""
+    -- Bind Parameters
+    WITH params AS (
+        SELECT %s as collection_id, %s::timestamp as start_date, %s::timestamp as end_date, %s as tolerance
+    ),
+
+    -- Filter gaps and reasons to query range
+    filtered_gaps AS (
+        SELECT g.start_ts, g.end_ts 
+        FROM gaps g, params p
+        WHERE g.collection_id = p.collection_id
+        AND (p.start_date IS NULL OR g.end_ts > p.start_date)
+        AND (p.end_date IS NULL OR g.start_ts < p.end_date)
+    ),
+    filtered_reasons AS (
+        SELECT r.start_ts, r.end_ts, r.reason 
+        FROM reasons r, params p
+        WHERE r.collection_id = p.collection_id
+        AND (p.start_date IS NULL OR r.end_ts > p.start_date)
+        AND (p.end_date IS NULL OR r.start_ts < p.end_date)
+    ),
+
+    -- Extract all boundary points from gaps and reasons
+    boundaries AS (
+        SELECT start_ts AS t FROM filtered_gaps
+        UNION SELECT end_ts FROM filtered_gaps
+        UNION SELECT start_ts FROM filtered_reasons
+        UNION SELECT end_ts FROM filtered_reasons
+    ),
+
+    -- Construct consecutive segments from points
+    segments AS (
+        SELECT 
+            t AS start_ts,
+            LEAD(t) OVER (ORDER BY t) AS end_ts
+        FROM boundaries
     )
 
-    query = """
-        SELECT start_ts, end_ts 
-        FROM gaps
-        WHERE collection_id = %s
-        AND end_ts - start_ts > %s::INTERVAL
+    -- Label segments based on alignment
+    SELECT 
+        s.start_ts,
+        s.end_ts,
+        r.reason
+    FROM segments s
+    JOIN filtered_gaps g ON tsrange(s.start_ts, s.end_ts) <@ tsrange(g.start_ts, g.end_ts)
+    LEFT JOIN filtered_reasons r ON tsrange(s.start_ts, s.end_ts) <@ tsrange(r.start_ts, r.end_ts)
+    WHERE s.end_ts IS NOT NULL
+
+    -- Apply tolerance filter
+    AND EXTRACT(EPOCH FROM (s.end_ts - s.start_ts)) >= (SELECT tolerance FROM params)
+    {known_filter}
+    ORDER BY s.start_ts
     """
-
-    if knownCheck:
-        query += """
-        AND NOT EXISTS (
-            SELECT 1 FROM reasons r 
-            WHERE r.collection_id = gaps.collection_id 
-            -- @> is range containment operator
-            AND tsrange(r.start_ts, r.end_ts) @> tsrange(gaps.start_ts, gaps.end_ts)
-        )"""
     
-    if startDate:
-        query += " AND start_ts > %s"
-    if endDate:
-        query += " AND end_ts < %s"
-
-    params = [collection_id, f"{granulegap} seconds"]
-    if startDate:
-        params.append(startDate)
-    if endDate:
-        params.append(endDate)
-
-    query += " ORDER BY start_ts;"
-
     cursor.execute(query, params)
     rows = cursor.fetchall()
 
