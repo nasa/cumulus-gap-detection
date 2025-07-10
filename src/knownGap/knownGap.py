@@ -48,31 +48,23 @@ def parse_event(event: Dict[str, Any]) -> Tuple[str, str, str, str]:
     return cid, start, end, reason
 
 
-# TODO Clarify behavior when multiple reasons span same gap
-# Currently, the same underlying data gap will be repeated for each reason it's covered by
-# Gaps are only considered covered if covered completely by a single reason. Gaps covered completely
-#    by multiple reasons are considered uncovered and will be retruned in full
-def get_known_gaps(cid: str, start: str, end: str, conn: Any) -> List[Dict[str, Any]]:
+def get_reasons(cid: str, start: str, end: str, conn: Any) -> List[Dict[str, Any]]:
     """
     Gets all gaps that fall within the specified time range for a collection.
     """
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT g.gap_id, g.collection_id, g.start_ts, g.end_ts, r.reason
-            FROM gaps g
-            LEFT JOIN reasons r ON (
-                g.collection_id = r.collection_id 
-                AND tsrange(g.start_ts, g.end_ts) && tsrange(r.start_ts, r.end_ts)
-            )
-            WHERE g.collection_id = %s
-            AND tsrange(g.start_ts, g.end_ts) && tsrange(%s, %s)
-            ORDER BY g.start_ts        
+            SELECT start_ts, end_ts, reason
+            FROM  reasons r
+            WHERE collection_id = %s
+            AND tsrange(start_ts, end_ts) && tsrange(%s, %s)
+            ORDER BY start_ts        
             """,
             (cid, start, end),
         )
 
-        columns = ["gap_id", "collection_id", "start_ts", "end_ts", "reason"]
+        columns = ["start_time", "end_time", "reason"]
         gaps = [dict(zip(columns, row)) for row in cur.fetchall()]
 
         return gaps
@@ -140,7 +132,7 @@ def lambda_handler(event: Dict[str, Any], context: Context) -> Dict[str, Any]:
                     logger.error(traceback.format_exc())
                     return build_response(500, {"message": f"Server error: {str(e)}"})
 
-            # Retreive gaps intersecting reasons
+            # Retreive reasons
             elif http_method == "GET":
                 try:
                     cid, start, end, reason = parse_event(event)
@@ -149,8 +141,8 @@ def lambda_handler(event: Dict[str, Any], context: Context) -> Dict[str, Any]:
                     return build_response(400, {"message": f"Bad Request: {str(e)}"})
 
                 try:
-                    gaps = get_known_gaps(cid, start, end, conn)
-                    return build_response(200, {"gaps": gaps})
+                    reasons = get_reasons(cid, start, end, conn)
+                    return build_response(200, {"reasons": reasons})
                 except Exception as e:
                     logger.error(f"Server error: {str(e)}")
                     logger.error(traceback.format_exc())
