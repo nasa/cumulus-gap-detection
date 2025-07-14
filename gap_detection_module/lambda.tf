@@ -115,7 +115,7 @@ resource "aws_iam_role_policy" "lambda_rds_proxy_role_policy" {
   })
 }
 
-resource "aws_iam_role_policy" "lambda_sns_get_attributes" {
+resource "aws_iam_role_policy" "lambda_sns_get_and_set_attributes" {
   name = "${var.DEPLOY_NAME}-gap-detection-sns-filter"
   role = var.lambda_processing_role_name
    policy = jsonencode({
