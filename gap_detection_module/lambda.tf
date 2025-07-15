@@ -115,6 +115,21 @@ resource "aws_iam_role_policy" "lambda_rds_proxy_role_policy" {
   })
 }
 
+resource "aws_iam_role_policy" "lambda_sns_get_and_set_attributes" {
+  name = "${var.DEPLOY_NAME}-gap-detection-sns-filter"
+  role = var.lambda_processing_role_name
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect = "Allow",
+      Action = ["sns:SetSubscriptionAttributes", "sns:GetSubscriptionAttributes"],
+      Resource = [aws_sns_topic_subscription.report_granules_ingest_subscription.arn, aws_sns_topic_subscription.report_granules_deletion_subscription.arn
+      ]
+    }]
+  })
+
+}
+
 # Allow lambda role to read RDS secrets from secrets manager
 resource "aws_iam_role_policy" "lambda_rds_secret_policy" {
   name = "${var.DEPLOY_NAME}-gap-detection-rds-secret-policy"
