@@ -90,7 +90,7 @@ paths:
       responses:
         "200":
           description: "200 response"
-    put:
+    post:
       x-amazon-apigateway-integration:
         uri: "${lambda_invoke_arns.knownGap}"
         httpMethod: "POST"
