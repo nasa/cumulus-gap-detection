@@ -21,7 +21,6 @@ CREATE TABLE gaps (
     -- Basic checks on timestamps
     CHECK (start_ts < end_ts),
     CHECK (start_ts != end_ts),
-    CHECK (end_ts - start_ts >= INTERVAL '1 second'),
 
     -- Unique constraint 
     CONSTRAINT no_duplicate_intervals
