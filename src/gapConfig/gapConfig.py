@@ -210,97 +210,6 @@ def init_migration_stream(collection_name, collection_version):
         "statusCode": response["StatusCode"],
         "message": f"Collection backfill complete: {payload_response.get('body')}",
     }
-def parse_execution_prefixes(raw_value: str) -> list[str]:
-    """
-    Parse the execution prefix from an environment variable that could be:
-    - a single string (plain)
-    - a JSON array of strings
-
-    Returns a list of strings.
-    """
-    try:
-        parsed = json.loads(raw_value)
-        if isinstance(parsed, list) and all(isinstance(item, str) for item in parsed):
-            return parsed
-        elif isinstance(parsed, str):
-            return [parsed]
-    except json.JSONDecodeError:
-        return [raw_value]  # Fallback to plain string
-
-    raise ValueError("Invalid execution prefix format")
-
-def update_sns_filter_policy(collections: list[dict]) -> dict:
-    """
-    Merges the given collections into the existing SNS filter policies.
-
-    Args:
-        collections (list): List of dictionaries with keys 'name' and 'raw_version'.
-
-    Returns:
-        dict: Result of the operation.
-    """
-    sns = boto3.client("sns")
-
-    ingest_sub_arn = os.getenv("SUBSCRIPTION_ARN_INGEST")
-    deletion_sub_arn = os.getenv("SUBSCRIPTION_ARN_DELETION")
-    ingest_execution_prefix_raw = os.getenv("EXECUTION_ARN_PREFIX_INGEST")
-
-    if not all([ingest_sub_arn, deletion_sub_arn, ingest_execution_prefix_raw]):
-        raise ValueError("Missing required SNS subscription ARNs or ingest execution prefix.")
-    
-    ingest_execution_prefixes = parse_execution_prefixes(ingest_execution_prefix_raw)
-
-    # Build collectionIds from input
-    new_collection_ids = {f"{c['name']}___{c['raw_version']}" for c in collections}
-
-    def update_policy(subscription_arn, is_deletion: bool):
-        # Get current filter policy
-        response = sns.get_subscription_attributes(SubscriptionArn=subscription_arn)
-        current_policy_str = response.get("Attributes", {}).get("FilterPolicy", "{}")
-        current_policy = json.loads(current_policy_str)
-
-        # Merge collectionIds
-        existing_ids = set(current_policy.get("record.collectionId", []))
-        merged_ids = sorted(existing_ids.union(new_collection_ids))
-
-        # Build event condition
-        if is_deletion:
-            event_filter = ["Delete"]
-        else:
-            event_filter = [{"anything-but": ["Delete"]}]
-
-        # Create new filter policy
-        new_policy = {
-            "record.collectionId": merged_ids,
-            "record.status": ["completed"],
-            "event": event_filter,
-        }
-
-        # Add execution prefix filter for ingest subscription only
-        if not is_deletion:
-            new_policy["record.execution"] = [{"prefix": p} for p in ingest_execution_prefixes]
-
-        # Apply filter policy
-        sns.set_subscription_attributes(
-            SubscriptionArn=subscription_arn,
-            AttributeName="FilterPolicy",
-            AttributeValue=json.dumps(new_policy),
-        )
-        sns.set_subscription_attributes(
-            SubscriptionArn=subscription_arn,
-            AttributeName="FilterPolicyScope",
-            AttributeValue="MessageBody",
-        )
-        logger.info(f"Updated filter policy for {subscription_arn}")
-
-    # Update both
-    update_policy(ingest_sub_arn, is_deletion=False)
-    update_policy(deletion_sub_arn, is_deletion=True)
-
-    return {
-        "status": "success",
-        "message": "Filter policies updated for ingest and deletion subscriptions.",
-    }
 
 
 def save_tolerance_to_dynamodb(shortname: str, versionid: str, tolerance: int):
@@ -415,10 +324,6 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
                         f"Collection {collection_id} left in incomplete state, use force=True to rectify"
                     )
                     return build_response(500, {"message": message})
-
-            # Update SNS filter policy after all collections processed
-            filter_update = update_sns_filter_policy(collections)
-            logger.info(f"Filter update result: {filter_update}")
 
         return build_response(
             200, {"message": f"Collection initialization complete for {collections}"}
