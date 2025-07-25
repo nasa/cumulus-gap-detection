@@ -61,10 +61,10 @@ resource "aws_sns_topic_subscription" "report_granules_ingest_subscription" {
     ],
     "record.execution" = [
       {
-        "prefix" = variables.ingest_prefix_1
+        "prefix" = local.execution_prefix_lst[0]
       },
       {
-        "prefix" = variables.ingest_prefix_2
+        "prefix" = local.execution_prefix_lst[1]
       }
     ]
   })
