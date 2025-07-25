@@ -60,11 +60,8 @@ resource "aws_sns_topic_subscription" "report_granules_ingest_subscription" {
       }
     ],
     "record.execution" = [
-      {
-        "prefix" = local.execution_prefix_lst[0]
-      },
-      {
-        "prefix" = local.execution_prefix_lst[1]
+      for prefix in local.execution_prefix_lst : {
+        prefix = prefix
       }
     ]
   })

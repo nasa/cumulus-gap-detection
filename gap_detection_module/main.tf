@@ -16,10 +16,7 @@ locals {
   base_url      = "https://console.aws.amazon.com/states/home"
   execution_url = "${local.base_url}?region=${local.region}#/executions/details"
 
-  state_machines = [
-    "${var.component_metadata_state_machine_name}",
-    "${var.component_cmr_state_machine_name}"
-  ]
+  state_machines = var.state_machine_name_lst
 
   execution_prefix_lst = [
           for name in local.state_machines :
