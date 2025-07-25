@@ -75,9 +75,6 @@ locals {
         CMR_ENV                          = "PROD"
         MIGRATION_STREAM_COMPILER_LAMBDA = "${var.DEPLOY_NAME}-gapMigrationStreamMessageCompiler"
         TOLERANCE_TABLE_NAME             = aws_dynamodb_table.tolerance_table.name
-        EXECUTION_ARN_PREFIX_INGEST = jsonencode(local.execution_prefix_lst)
-        SUBSCRIPTION_ARN_DELETION = aws_sns_topic_subscription.report_granules_deletion_subscription.arn
-        SUBSCRIPTION_ARN_INGEST   = aws_sns_topic_subscription.report_granules_ingest_subscription.arn
       }
     }
     getTimeGaps = {
