@@ -84,15 +84,9 @@ variable "vpc_id" {
 variable "report_granules_topic_arn" {
   type = string
 }
-variable "component_metadata_state_machine_name" {
-  type        = string
-  description = "The name of your component metadata state machine from your cumulus workflows module"
 
-}
-
-variable "component_cmr_state_machine_name" {
-  type        = string
-  description = "The name of your component cmr state machine from your cumulus workflows module"
-
+variable "state_machine_name_lst" {
+  description = "List of state machine names used to construct prefixes for ingest filter policy"
+  type        = list(string)
 }
 

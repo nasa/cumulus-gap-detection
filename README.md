@@ -18,8 +18,9 @@ module "gesdisc-cumulus-gap-detection" {
    security_group_ids = [data.aws_security_group.security_group.id] # Desired aws security group ids for lambdas
    security_group_id =  data.aws_security_group.security_group.id # Security group id
    subnet_ids = data.aws_subnets.subnet_ids.ids # Desired subnet ids for lambdas 
-   component_metadata_state_machine_name = data.aws_sfn_state_machine.component_metadata_state_machine.name # Component metadata state machine name
-   component_cmr_state_machine_name      = data.aws_sfn_state_machine.component_cmr_state_machine.name      # Component CMR state machine name
+  # List of state machine names used to construct prefixes for sns subcription filter policies
+   state_machine_name_lst = [data.aws_sfn_state_machine.component_metadata_state_machine.name , data.aws_sfn_state_machine.component_cmr_state_machine.name] 
+
 
    
    // Optional parameters
