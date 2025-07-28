@@ -16,10 +16,13 @@ locals {
   base_url      = "https://console.aws.amazon.com/states/home"
   execution_url = "${local.base_url}?region=${local.region}#/executions/details"
 
-  state_machines = [
-    "${var.component_metadata_state_machine_name}",
-    "${var.component_cmr_state_machine_name}"
-  ]
+  state_machines = var.state_machine_name_lst
+
+  execution_prefix_lst = [
+          for name in local.state_machines :
+          "${local.execution_url}/arn:aws:states:${local.region}:${local.account_id}:execution:${name}"
+
+        ]
   gap_functions = {
     gapUpdate = {
       timeout     = 10
@@ -69,13 +72,6 @@ locals {
         CMR_ENV                          = "PROD"
         MIGRATION_STREAM_COMPILER_LAMBDA = "${var.DEPLOY_NAME}-gapMigrationStreamMessageCompiler"
         TOLERANCE_TABLE_NAME             = aws_dynamodb_table.tolerance_table.name
-        EXECUTION_ARN_PREFIX_INGEST = jsonencode([
-          for name in local.state_machines :
-          "${local.execution_url}/arn:aws:states:${local.region}:${local.account_id}:execution:${name}"
-
-        ])
-        SUBSCRIPTION_ARN_DELETION = aws_sns_topic_subscription.report_granules_deletion_subscription.arn
-        SUBSCRIPTION_ARN_INGEST   = aws_sns_topic_subscription.report_granules_ingest_subscription.arn
       }
     }
     getTimeGaps = {
