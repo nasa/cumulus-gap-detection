@@ -117,6 +117,8 @@ def init_collection(collection_name, collection_version, conn) -> str:
     try:
         start, end = get_cmr_time(collection_id)
         logger.info(f"Initializing {collection_id} with {start, end}")
+
+        # For new collection, partition `gaps` and `reasons` tables  and insert into `collections` table
         with conn.cursor() as cur:
             # Check if partition already exists
             safe_collection_id = re.sub(r"\W+", "_", collection_id)
@@ -129,7 +131,6 @@ def init_collection(collection_name, collection_version, conn) -> str:
             """,
                 (partition_name,),
             )
-
             if cur.fetchone() is None:
                 # Create the partition
                 cur.execute(
@@ -145,8 +146,39 @@ def init_collection(collection_name, collection_version, conn) -> str:
                     ).format(Identifier(partition_name), Identifier(constraint_name))
                 )
                 logger.info(
-                    f"Created partition {partition_name} for collection {collection_id}"
+                    f"Created gaps partition {partition_name} for collection {collection_id}"
                 )
+            # Create partition on `reasons` table
+            reasons_partition_name = f"reasons_{safe_collection_id}"
+            cur.execute(
+                """
+                SELECT 1 FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE c.relname = %s AND n.nspname = 'public'
+            """,
+                (reasons_partition_name,),
+            )
+            if cur.fetchone() is None:
+                # Create the reasons partition
+                cur.execute(
+                    SQL(
+                        "CREATE TABLE {} PARTITION OF reasons FOR VALUES IN ({})"
+                    ).format(Identifier(reasons_partition_name), Literal(collection_id))
+                )
+                # Add the exclusion constraint to the reasons partition
+                reasons_constraint_name = f"{reasons_partition_name}_no_overlap"
+                cur.execute(
+                    SQL(
+                        "ALTER TABLE {} ADD CONSTRAINT {} EXCLUDE USING gist (tsrange(start_ts, end_ts) WITH &&)"
+                    ).format(
+                        Identifier(reasons_partition_name),
+                        Identifier(reasons_constraint_name),
+                    )
+                )
+                logger.info(
+                    f"Created reasons partition {reasons_partition_name} for collection {collection_id}"
+                )
+
             # Insert new collection in collections table, triggers initial gap insert into gap table
             cur.execute(
                 """
@@ -155,6 +187,7 @@ def init_collection(collection_name, collection_version, conn) -> str:
                 """,
                 (collection_id, start, end),
             )
+
             conn.commit()
         return f"Initialized collection {collection_id} in table"
 
@@ -210,7 +243,6 @@ def init_migration_stream(collection_name, collection_version):
         "statusCode": response["StatusCode"],
         "message": f"Collection backfill complete: {payload_response.get('body')}",
     }
-
 
 def save_tolerance_to_dynamodb(shortname: str, versionid: str, tolerance: int):
     """Save tolerance value to DynamoDB"""
@@ -276,7 +308,6 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
             for collection in collections:
                 collection_id = f"{collection['name']}___{collection['version']}"
                 tolerance = collection.get("tolerance")
-
                 # Update tolerance table even if the collection already exists
                 if tolerance is not None:
                     try:
@@ -289,41 +320,51 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
                         logger.error(
                             f"Error saving tolerance for {collection['name']}___{collection['raw_version']}: {str(e)}"
                         )
-
-                if collection_id in current_collections:
-                    if backfill_behavior.lower() == "force":
-                        # TODO Remove first or just re-send?
-                        logger.info(
-                            f"Force flag detected, proceeding with backfill for existing collection: {collection_id}"
-                        )
-                    else:
-                        logger.info(
-                            f"Skipping initialization of {collection_id}: already exists in collection table"
-                        )
-                        continue
-
                 # Add collection to collections table, create partition for gaps table, set initial full gap
-                message = init_collection(
-                    collection["name"], collection["version"], conn
-                )
-                logger.info(message)
+                if collection_id not in current_collections:
+                    message = init_collection(
+                        collection["name"], collection["version"], conn
+                    )
+                    logger.info(message)
 
-                # Kick off the migration stream
-                try:
-                    logger.info(f"Starting collection backfill")
-                    migration_result = init_migration_stream(
-                        collection["name"], collection["version"].replace("_", ".")
+                    # Kick off the migration stream
+                    try:
+                        logger.info(f"Starting collection backfill")
+                        migration_result = init_migration_stream(
+                            collection["name"], collection["version"].replace("_", ".")
+                        )
+                        logger.info(f"Backfill result: {migration_result}")
+                    except Exception as e:
+                        message = (
+                            f"Collection backfill failed for {collection_id}: {str(e)}"
+                        )
+                        logger.error(message)
+                        logger.warn(
+                            f"Collection {collection_id} left in incomplete state, use force=True to rectify"
+                        )
+                        return build_response(500, {"message": message})
+                # Skip DB init but still backfill granules from CMR
+                elif backfill_behavior.lower() == "force":
+                    logger.info(
+                        f"Force flag detected, proceeding with backfill for existing collection: {collection_id}"
                     )
-                    logger.info(f"Backfill result: {migration_result}")
-                except Exception as e:
-                    message = (
-                        f"Collection backfill failed for {collection_id}: {str(e)}"
+                    # Kick off the migration stream
+                    try:
+                        logger.info(f"Starting collection backfill")
+                        migration_result = init_migration_stream(
+                            collection["name"], collection["version"].replace("_", ".")
+                        )
+                        logger.info(f"Backfill result: {migration_result}")
+                    except Exception as e:
+                        message = (
+                            f"Collection backfill failed for {collection_id}: {str(e)}"
+                        )
+                        logger.error(message)
+                        return build_response(500, {"message": message})
+                else:
+                    logger.info(
+                        f"Skipping initialization of {collection_id}: already exists in collection table"
                     )
-                    logger.error(message)
-                    logger.warn(
-                        f"Collection {collection_id} left in incomplete state, use force=True to rectify"
-                    )
-                    return build_response(500, {"message": message})
 
         return build_response(
             200, {"message": f"Collection initialization complete for {collections}"}
