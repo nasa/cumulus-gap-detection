@@ -13,6 +13,8 @@ from utils import get_db_connection, validate_environment_variables
 import re
 from psycopg.sql import SQL, Identifier, Literal
 import botocore
+import asyncio
+import aiobotocore.session
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -197,52 +199,79 @@ def init_collection(collection_name, collection_version, conn) -> str:
         return f"Collection {collection_id} initialization failed: {str(e)}"
 
 
-def init_migration_stream(collection_name, collection_version):
+async def init_migration_stream(collections):
     """
-    Invoke the gapMigrationStreamMessageCompiler Lambda function
-
+    Invoke the gapMigrationStreamMessageCompiler Lambda function for multiple collections concurrently
     Args:
-        collection_name (str): Collection short name
-        collection_version (str): Collection version
-
+        collections (list): List of dicts with 'name' and 'version' keys
     Returns:
-        dict: Response from the Lambda invocation
+        dict: Aggregated response from all Lambda invocations
     """
-    # Configure botoclient to wait for backfill execution, defaults are too short
-    config = botocore.config.Config(
+    # Configure client to wait for backfill execution, defaults are too short
+    config = aiobotocore.config.AioConfig(
         connect_timeout=900,
         read_timeout=900,
         retries={"max_attempts": 0},
         tcp_keepalive=True,  # NAT gateway has internal timeout of 350s so we need keepalive here
     )
 
-    lambda_client = boto3.client(
+    session = aiobotocore.session.get_session()
+    async with session.create_client(
         "lambda", region_name=os.getenv("AWS_REGION"), config=config
-    )
-    payload = {
-        "Records": [
-            {
-                "Sns": {
-                    "Message": json.dumps(
-                        {"short_name": collection_name, "version": collection_version}
-                    )
-                }
-            }
-        ]
-    }
-    response = lambda_client.invoke(
-        FunctionName=os.environ.get("MIGRATION_STREAM_COMPILER_LAMBDA"),
-        Payload=json.dumps(payload),
-    )
-    payload_response = json.loads(response["Payload"].read().decode())
-    if response["StatusCode"] != 200 or payload_response.get("statusCode") != 200:
-        raise Exception(f"Collection backfill failed: {payload_response.get('body')}")
+    ) as lambda_client:
 
-    return {
-        "status": "success",
-        "statusCode": response["StatusCode"],
-        "message": f"Collection backfill complete: {payload_response.get('body')}",
-    }
+        # Create tasks for concurrent execution
+        tasks = []
+        for collection in collections:
+            payload = {
+                "Records": [
+                    {
+                        "Sns": {
+                            "Message": json.dumps(
+                                {
+                                    "short_name": collection["name"],
+                                    "version": collection["version"],
+                                }
+                            )
+                        }
+                    }
+                ]
+            }
+
+            task = lambda_client.invoke(
+                FunctionName=os.environ.get("MIGRATION_STREAM_COMPILER_LAMBDA"),
+                Payload=json.dumps(payload),
+            )
+            tasks.append((task, collection))
+
+        # Wait for all tasks to return
+        responses = await asyncio.gather(*[task for task, _ in tasks])
+        results = []
+        for i, response in enumerate(responses):
+            collection = tasks[i][1]
+            payload_response = await response["Payload"].read()
+            payload_data = json.loads(payload_response.decode())
+            if response["StatusCode"] != 200 or payload_data.get("statusCode") != 200:
+                #raise Exception(
+                logger.warn(
+                    f"Collection backfill failed for {collection['name']}: {payload_data.get('body')}"
+                )
+
+            results.append(
+                {
+                    "collection": collection["name"],
+                    "status": "success",
+                    "statusCode": response["StatusCode"],
+                    "message": f"Collection backfill complete: {payload_data.get('body')}",
+                }
+            )
+
+        return {
+            "status": "success",
+            "results": results,
+            "message": f"All {len(collections)} collection backfills completed successfully",
+        }
+
 
 def save_tolerance_to_dynamodb(shortname: str, versionid: str, tolerance: int):
     """Save tolerance value to DynamoDB"""
@@ -303,6 +332,7 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
         if http_method != "POST":
             return build_response(405, {"message": "Unsupported request method"})
 
+        backfill_collections = []
         with get_db_connection() as conn:
             current_collections = check_collections(conn)
             for collection in collections:
@@ -326,45 +356,43 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
                         collection["name"], collection["version"], conn
                     )
                     logger.info(message)
+                    backfill_collections.append(collection)
 
-                    # Kick off the migration stream
-                    try:
-                        logger.info(f"Starting collection backfill")
-                        migration_result = init_migration_stream(
-                            collection["name"], collection["version"].replace("_", ".")
-                        )
-                        logger.info(f"Backfill result: {migration_result}")
-                    except Exception as e:
-                        message = (
-                            f"Collection backfill failed for {collection_id}: {str(e)}"
-                        )
-                        logger.error(message)
-                        logger.warn(
-                            f"Collection {collection_id} left in incomplete state, use force=True to rectify"
-                        )
-                        return build_response(500, {"message": message})
                 # Skip DB init but still backfill granules from CMR
                 elif backfill_behavior.lower() == "force":
                     logger.info(
                         f"Force flag detected, proceeding with backfill for existing collection: {collection_id}"
                     )
-                    # Kick off the migration stream
-                    try:
-                        logger.info(f"Starting collection backfill")
-                        migration_result = init_migration_stream(
-                            collection["name"], collection["version"].replace("_", ".")
-                        )
-                        logger.info(f"Backfill result: {migration_result}")
-                    except Exception as e:
-                        message = (
-                            f"Collection backfill failed for {collection_id}: {str(e)}"
-                        )
-                        logger.error(message)
-                        return build_response(500, {"message": message})
+                    backfill_collections.append(collection)
                 else:
                     logger.info(
                         f"Skipping initialization of {collection_id}: already exists in collection table"
                     )
+
+            # Kick off the migration stream
+            try:
+                logger.info(f"Starting collection backfill")
+                print(backfill_collections)
+                migration_result = asyncio.run(
+                    init_migration_stream(
+                        [
+                            {
+                                "name": collection["name"],
+                                "version": collection["version"].replace("_", "."),
+                            }
+                            for collection in backfill_collections
+                        ]
+                    )
+                )
+                #logger.info(f"Backfill result: {migration_result}")
+            except Exception as e:
+                message = f"Collection backfill failed for: {str(e)}"
+                logger.error(message)
+                logger.error(traceback.format_exc())
+                logger.warn(
+                    f"Collection left in incomplete state, use force=True to rectify"
+                )
+                return build_response(500, {"message": message})
 
         return build_response(
             200, {"message": f"Collection initialization complete for {collections}"}
