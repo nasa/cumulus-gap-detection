@@ -48,9 +48,17 @@ resource "aws_lambda_layer_version" "function_layers" {
   compatible_runtimes = ["python3.13"]
 }
 
+resource "aws_s3_object" "utils_deps" {
+  bucket      = aws_s3_bucket.artifacts_bucket.bucket
+  key         = "${var.DEPLOY_NAME}-utils-deps.zip"
+  source      = "${path.module}/artifacts/layers/utils-deps.zip"
+  source_hash = filemd5("${path.module}/artifacts/layers/utils-deps.zip")
+}
+
 resource "aws_lambda_layer_version" "utils_layer" {
   layer_name          = "${var.DEPLOY_NAME}-utils_layer"
-  filename            = "${path.module}/artifacts/layers/utils-deps.zip"
+  s3_bucket           = aws_s3_bucket.artifacts_bucket.bucket
+  s3_key              = aws_s3_object.utils_deps.key
   source_code_hash    = filebase64sha256("${path.module}/artifacts/layers/utils-deps.zip")
   compatible_runtimes = ["python3.13"]
 }
