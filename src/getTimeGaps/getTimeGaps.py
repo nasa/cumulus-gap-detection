@@ -13,7 +13,6 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 
-
 def build_response(status_code: int, body: any) -> dict[str, any]:
     """
     Builds https response object and returns it.
@@ -35,7 +34,6 @@ def build_response(status_code: int, body: any) -> dict[str, any]:
     }
 
 
-
 def check_date_format(date_string) -> bool:
     """
     Checks if date string is a valid date in the format: %Y-%m-%d
@@ -52,6 +50,7 @@ def check_date_format(date_string) -> bool:
         return True
     except ValueError:
         return False
+
 
 def compare_dates(startDate, endDate) -> bool:
     """
@@ -94,7 +93,7 @@ def get_presigned_url(data: dict, collection_id: str) -> str:
             "get_object", Params={"Bucket": bucket_name, "Key": s3_key}, ExpiresIn=3600
         )
 
-        logger.info(f"Data saved to S3 and pre-signed URL generated: {s3_key}")
+        logger.debug(f"Data saved to S3 and pre-signed URL generated: {s3_key}")
         return presigned_url
 
     except Exception as e:
@@ -115,7 +114,7 @@ def lambda_handler(event, context):
         dict: Response indicating success or failure.
     """
 
-    logger.info(f"Received event: {json.dumps(event)}")
+    logger.debug(f"Gap API request received: {json.dumps(event)}")
 
     # get query params
     params = event.get('queryStringParameters') or {}
@@ -129,6 +128,7 @@ def lambda_handler(event, context):
     endDate = None
 
     if not shortname or not versionid:
+        logger.warning("Gap API request missing required parameters")
         return build_response(
             400, {"message": "Missing query parameters: shortname or versionid"}
         )
@@ -143,6 +143,7 @@ def lambda_handler(event, context):
         elif tolerance_val == "false":
             toleranceCheck = False
         else:
+            logger.warning(f"Invalid tolerance parameter for {collection_id}: {tolerance_val}")
             return build_response(
                 400,
                 {
@@ -158,6 +159,7 @@ def lambda_handler(event, context):
         elif known_value == "false":
             knownCheck = False
         else:
+            logger.warning(f"Invalid knownGap parameter for {collection_id}: {known_value}")
             return build_response(
                 400,
                 {
@@ -169,12 +171,14 @@ def lambda_handler(event, context):
     if 'startDate' in params:
         startDate = params['startDate']
         if not check_date_format(startDate):
+            logger.warning(f"Invalid startDate format for {collection_id}: {startDate}")
             return build_response(400, {'message': "Bad request: Start date needs to be in format YEAR-MONTH-DAY"})
 
     # Checks if endDate filter was applied in parameters
     if 'endDate' in params:
         endDate = params['endDate']
         if not check_date_format(endDate):
+            logger.warning(f"Invalid endDate format for {collection_id}: {endDate}")
             return build_response(
                 400,
                 {
@@ -182,14 +186,21 @@ def lambda_handler(event, context):
                 },
             )
 
+    # Validate date range if both dates provided
+    if startDate and endDate:
+        if not compare_dates(startDate, endDate):
+            logger.warning(f"Invalid date range for {collection_id}: {startDate} > {endDate}")
+            return build_response(
+                400, {"message": "Bad request: Start date is greater than end date"}
+            )
+
     with get_db_connection() as conn:
-
         with conn.cursor() as cursor:
-
             # Checks if collection was configured in gap_config. Returns 200 if not.
             if check_gap_config(collection_id, cursor):
-                logging.info(f"Collection {collection_id} found in gap config table.")
+                logger.debug(f"Collection {collection_id} found in gap config table.")
             else:
+                logger.warning(f"Gap API request for uninitialized collection: {collection_id}")
                 return build_response(
                     400,
                     {
@@ -199,11 +210,8 @@ def lambda_handler(event, context):
 
             # Gets gap tolerance if tolerance filter was applied
             if toleranceCheck:
-                logger.info(f"Fetching time gaps for {shortname} version {versionid}")
                 granule_gap = get_granule_gap(shortname, versionid)
-                logger.info(
-                    f"Granule gap for {shortname} v{versionid}: {granule_gap} seconds"
-                )
+                logger.debug(f"Using tolerance filter for {collection_id}: {granule_gap}s")
             else:
                 granule_gap = 0
 
@@ -218,26 +226,18 @@ def lambda_handler(event, context):
                      startDate, 
                      endDate
                 )
-                logger.info(f"Fetched {len(time_gaps)} time gaps exceeding the granulegap threshold.")
             except Exception as e:
-                logger.error(f"Failed to fetch time gaps: {e}")
+                logger.error(f"Failed to fetch time gaps for {collection_id}: {str(e)}")
                 return build_response(
                     500, {"message": f"Failed to fetch time gaps: {e}"}
                 )
 
-    if startDate and endDate:
-        if not compare_dates(startDate, endDate):
-            return build_response(
-                400, {"message": "Bad request: Start date is greater than end date"}
-            )
-
     # If no gaps, return early
     if not time_gaps:
-        logger.info("No time gaps exceed the granulegap threshold.")
+        logger.info(f"Gap API request completed: {collection_id} - no gaps found")
         return build_response(200, {"message": "No qualifying time gaps found."})
 
     body = {"timeGaps": time_gaps, "gapTolerance": granule_gap}
-
     response_size = len(json.dumps(body, default=str).encode("utf-8"))
 
     # Threshold dictated by Lambda's 6MB response payload limit
@@ -256,11 +256,11 @@ def lambda_handler(event, context):
                     "presigned_url": presigned_url,
                 },
             )
-
         except Exception as e:
-            logger.error(f"Failed to generate pre-signed URL: {e}")
+            logger.error(f"Failed to generate presigned URL for {collection_id}: {str(e)}")
             return build_response(
                 500, {"message": f"Failed to generate results URL: {e}"}
             )
 
+    logger.info(f"Gap API request completed: {collection_id} - {len(time_gaps)} gaps returned ({response_size:,} bytes)")
     return build_response(200, body)

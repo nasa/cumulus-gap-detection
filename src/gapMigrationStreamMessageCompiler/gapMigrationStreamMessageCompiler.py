@@ -19,7 +19,6 @@ if not logger.handlers:
     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
     handler.setFormatter(formatter)
     logger.addHandler(handler)
-logger.info("Logger initialized successfully.")
 
 loop = asyncio.get_event_loop()
 
@@ -106,11 +105,12 @@ def get_params(short_name, version, max_producers=8, consumer_ratio=1.5):
         queue_size = n_producers * 2 * 2000
         date_ranges = split_date_ranges(beginning_date, ending_date, n_producers)
 
+        logger.info(f"Collection {short_name} v{version}: {num_granules} granules, {n_producers} producers, {n_consumers} consumers")
         return date_ranges, n_consumers, queue_size, num_granules
 
     except Exception as e:
         logger.error(f"Error occurred: {e}")
-        logger.error(traceback.format_exc())
+        logger.debug(traceback.format_exc())
         return None, {
             "statusCode": 400,
             "body": json.dumps(
@@ -141,6 +141,7 @@ async def fetch_cmr_range(session, url, params, result_queue, fetch_stats):
     """
     search_after = None
     max_retries = 3
+    
     while True:
         headers = {"CMR-Search-After": search_after} if search_after else {}
 
@@ -152,7 +153,7 @@ async def fetch_cmr_range(session, url, params, result_queue, fetch_stats):
                     if response.status != 200:
                         error_body = await response.text()
                         if retry < max_retries:
-                            logger.warning(
+                            logger.debug(
                                 f"CMR API error: HTTP {response.status} on {params}: {error_body} "
                                 f"Retrying in {retry ** 2}s ({retry+1}/{max_retries})"
                             )
@@ -178,14 +179,12 @@ async def fetch_cmr_range(session, url, params, result_queue, fetch_stats):
                     fetch_stats["total"] += len(granules)
                     if not search_after:
                         return
-                    if fetch_stats["total"] % 10000 == 0:
-                        logger.info(f"{fetch_stats["total"]} granules fetched")
                     break
 
             except Exception as e:
                 if retry < max_retries:
                     retry_delay = retry**2
-                    logger.warning(
+                    logger.debug(
                         f"Error fetching CMR page for {params}: {str(e)}. "
                         f"Retrying in {retry ** 2}s ({retry+1}/{max_retries})"
                     )
@@ -279,7 +278,7 @@ async def process_collection(
 
     fetch_stats = {"total": 0}
     send_stats = {"total": 0}
-    logger.info(f"Processing {short_name} v{version} with {len(partitions)} producers")
+    logger.info(f"Starting collection processing: {short_name} v{version} ({len(partitions)} producers, {n_consumers} consumers)")
 
     async with aiohttp.ClientSession() as http_session:
         async with aioboto3.Session().client(
@@ -322,7 +321,7 @@ async def process_collection(
 
                     # Wait for producers to finish
                     await asyncio.gather(*producers)
-                    logger.info("All producers completed")
+                    logger.debug("All producers completed")
 
                     # Signal consumers to complete
                     for _ in range(n_consumers):
@@ -330,8 +329,7 @@ async def process_collection(
 
                     # Wait for consumers
                     await asyncio.gather(*consumers)
-                    logger.info("All tasks complete")
-
+                    logger.debug("All consumers completed")
 
             except Exception as e:
                 logger.error(f"Failed to process collection {short_name} v{version}: {e}")
@@ -342,7 +340,8 @@ async def process_collection(
                     send_stats["total"] / total_duration if total_duration > 0 else 0
                 )
                 logger.info(
-                    f"{fetch_stats['total']} fetched, {send_stats['total']} sent in {total_duration:.1f}s ({throughput:.1f}/s)"
+                    f"Collection processing complete: {short_name} v{version} - "
+                    f"{fetch_stats['total']} fetched, {send_stats['total']} sent in {total_duration:.1f}s ({throughput:.1f} msg/s)"
                 )
 
 
@@ -365,7 +364,7 @@ def lambda_handler(event, context):
         short_name = sns_message.get("short_name")
         version = sns_message.get("version")
         if not short_name or not version:
-            logger.error("Missing short_name or version in the event")
+            logger.warning("Missing short_name or version in the event")
             return {
                 "statusCode": 400,
                 "body": json.dumps(
@@ -375,7 +374,7 @@ def lambda_handler(event, context):
 
     except Exception as e:
         logger.error(f"Input Error: {e}")
-        logger.error(traceback.format_exc())
+        logger.debug(traceback.format_exc())
         return None, {
             "statusCode": 400,
             "body": json.dumps(
@@ -407,11 +406,12 @@ def lambda_handler(event, context):
                 total_granules,
             )
         )
+        logger.info(f"Lambda execution completed successfully for {short_name} v{version}")
         return {
             "statusCode": 200,
             "body": json.dumps({"message": "Processing complete"}),
         }
     except Exception as e:
-        logger.error(f"Error occurred: {e}")
-        logger.error(traceback.format_exc())
+        logger.error(f"Lambda execution failed for {short_name} v{version}: {str(e)}")
+        logger.debug(traceback.format_exc())
         return {"statusCode": 500, "body": json.dumps({"error": str(e)})}

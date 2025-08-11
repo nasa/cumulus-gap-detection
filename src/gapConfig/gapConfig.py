@@ -84,7 +84,8 @@ def get_cmr_time(collection_id: str) -> Tuple[str, str]:
         url = f"https://cmr.earthdata.nasa.gov/search/collections.umm_json_v1_4?short_name={short_name}&version={version}"
     else:
         url = f"https://cmr.{cmr_env}.earthdata.nasa.gov/search/collections.umm_json_v1_4?short_name={short_name}&version={version}"
-    logger.info(f"Requesting granule time from: {url}")
+    
+    logger.debug(f"Requesting granule time from: {url}")
     res = requests.get(url)
     data = res.json()
     if not data["items"]:
@@ -116,7 +117,7 @@ def init_collection(collection_name, collection_version, conn) -> str:
     collection_id = f"{collection_name}___{collection_version}"
     try:
         start, end = get_cmr_time(collection_id)
-        logger.info(f"Initializing {collection_id} with {start, end}")
+        logger.debug(f"Retrieved temporal extent for {collection_id}: {start} to {end}")
 
         # For new collection, partition `gaps` and `reasons` tables  and insert into `collections` table
         with conn.cursor() as cur:
@@ -148,6 +149,7 @@ def init_collection(collection_name, collection_version, conn) -> str:
                 logger.info(
                     f"Created gaps partition {partition_name} for collection {collection_id}"
                 )
+            
             # Create partition on `reasons` table
             reasons_partition_name = f"reasons_{safe_collection_id}"
             cur.execute(
@@ -189,11 +191,13 @@ def init_collection(collection_name, collection_version, conn) -> str:
             )
 
             conn.commit()
+        logger.info(f"Successfully initialized collection {collection_id}")
         return f"Initialized collection {collection_id} in table"
 
     except Exception as e:
         conn.rollback()
-        logger.warning(traceback.format_exc())
+        logger.error(f"Collection {collection_id} initialization failed: {str(e)}")
+        logger.debug(traceback.format_exc())
         return f"Collection {collection_id} initialization failed: {str(e)}"
 
 
@@ -236,8 +240,10 @@ def init_migration_stream(collection_name, collection_version):
     )
     payload_response = json.loads(response["Payload"].read().decode())
     if response["StatusCode"] != 200 or payload_response.get("statusCode") != 200:
+        logger.error(f"Migration stream invocation failed for {collection_name} v{collection_version}")
         raise Exception(f"Collection backfill failed: {payload_response.get('body')}")
 
+    logger.info(f"Migration stream completed for {collection_name} v{collection_version}")
     return {
         "status": "success",
         "statusCode": response["StatusCode"],
@@ -260,11 +266,11 @@ def save_tolerance_to_dynamodb(shortname: str, versionid: str, tolerance: int):
                 "granulegap": tolerance,
             }
         )
-        logger.info(
+        logger.debug(
             f"Saved tolerance for {shortname}___{versionid}: {tolerance} seconds. PutItem Response: {response['ResponseMetadata']['HTTPStatusCode']}"
         )
     except Exception as e:
-        logger.error(f"Failed to save tolerance to DynamoDB: {str(e)}")
+        logger.error(f"Failed to save tolerance to DynamoDB for {shortname}___{versionid}: {str(e)}")
         raise
 
 
@@ -291,13 +297,13 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
     try:
         http_method = event.get("httpMethod", "")
         resource_path = event.get("path", "")
-        logger.info(f"Got HTTP {http_method} for {resource_path}")
+        logger.debug(f"Got HTTP {http_method} for {resource_path}")
 
         try:
             collections, backfill_behavior = parse_event(event)
         except Exception as e:
-            message = f"Error processing request: {str(e)}"
-            logger.error(traceback.format_exc())
+            message = f"Invalid request format: {str(e)}"
+            logger.warning(message)
             return build_response(400, {"message": message})
 
         if http_method != "POST":
@@ -308,6 +314,7 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
             for collection in collections:
                 collection_id = f"{collection['name']}___{collection['version']}"
                 tolerance = collection.get("tolerance")
+                
                 # Update tolerance table even if the collection already exists
                 if tolerance is not None:
                     try:
@@ -316,45 +323,42 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
                             collection["raw_version"],
                             int(tolerance),
                         )
+                        logger.info(f"Updated tolerance for {collection['name']} v{collection['raw_version']}: {tolerance}s")
                     except Exception as e:
                         logger.error(
                             f"Error saving tolerance for {collection['name']}___{collection['raw_version']}: {str(e)}"
                         )
+                        
                 # Add collection to collections table, create partition for gaps table, set initial full gap
                 if collection_id not in current_collections:
-                    message = init_collection(
-                        collection["name"], collection["version"], conn
-                    )
-                    logger.info(message)
+                    init_collection(collection["name"], collection["version"], conn)
 
                     # Kick off the migration stream
                     try:
-                        logger.info(f"Starting collection backfill")
                         migration_result = init_migration_stream(
                             collection["name"], collection["version"].replace("_", ".")
                         )
-                        logger.info(f"Backfill result: {migration_result}")
+                        logger.debug(f"Backfill result: {migration_result}")
                     except Exception as e:
                         message = (
                             f"Collection backfill failed for {collection_id}: {str(e)}"
                         )
                         logger.error(message)
-                        logger.warn(
+                        logger.warning(
                             f"Collection {collection_id} left in incomplete state, use force=True to rectify"
                         )
                         return build_response(500, {"message": message})
+                        
                 # Skip DB init but still backfill granules from CMR
                 elif backfill_behavior.lower() == "force":
                     logger.info(
                         f"Force flag detected, proceeding with backfill for existing collection: {collection_id}"
                     )
-                    # Kick off the migration stream
                     try:
-                        logger.info(f"Starting collection backfill")
                         migration_result = init_migration_stream(
                             collection["name"], collection["version"].replace("_", ".")
                         )
-                        logger.info(f"Backfill result: {migration_result}")
+                        logger.debug(f"Backfill result: {migration_result}")
                     except Exception as e:
                         message = (
                             f"Collection backfill failed for {collection_id}: {str(e)}"
@@ -366,11 +370,12 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
                         f"Skipping initialization of {collection_id}: already exists in collection table"
                     )
 
+        logger.info(f"Collection initialization completed for {len(collections)} collection(s)")
         return build_response(
             200, {"message": f"Collection initialization complete for {collections}"}
         )
 
     except Exception as e:
-        logger.error(f"Error processing request: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.error(f"Unexpected error in lambda handler: {str(e)}")
+        logger.debug(traceback.format_exc())
         return build_response(500, {"message": "Unexpected error occurred"})

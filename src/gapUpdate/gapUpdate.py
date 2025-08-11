@@ -18,7 +18,7 @@ logger.setLevel(logging.INFO)
 
 
 def validate_collections(collections: Set[str], conn) -> bool:
-    """Verifies that all given collections are in in collections table.
+    """Verifies that all given collections are in collections table.
     Args:
         collections (set): A set of collection IDs to check and potentially initialize.
         conn (psycopg.Connection): An active database connection.
@@ -33,7 +33,7 @@ def validate_collections(collections: Set[str], conn) -> bool:
         found = {row[0] for row in cur.fetchall()}
         missing = collections - found
         if missing:
-            logging.error(f"Collections not in table: {missing}")
+            logger.error(f"Collections not in table: {missing}")
         return not missing
 
 
@@ -56,12 +56,12 @@ def update_gaps(
         cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (collection_id,))
         cursor.execute(update_query)
         conn.commit()
-        logger.info(f"Transaction committed for collection {collection_id}")
+        logger.debug(f"Transaction committed for collection {collection_id}")
     except Exception as e:
         # Rollback on error
         conn.rollback()
         logger.error(f"Error processing collection {collection_id}: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.debug(traceback.format_exc())
         raise e
     finally:
         cursor.close()
@@ -101,11 +101,9 @@ def add_gaps(
         
         overlaps = cursor.fetchall()
         if overlaps:
-            overlap_details = [f"granule[{o[0]}, {o[1]}] overlaps gap[{o[2]}, {o[3]}]" for o in overlaps]
-            logger.warning(
-                    f"Deleting nonexistent data: {collection_id}: {len(overlaps)} deleted granules overlap existing gaps. "
-                f"Details: {', '.join(overlap_details)}"
-            )
+            logger.warning(f"Deletion overlap detected for {collection_id}: {len(overlaps)} deleted granules overlap existing gaps")
+            logger.debug(f"Overlap details for {collection_id}: " + 
+                        ", ".join([f"granule[{o[0]}, {o[1]}] overlaps gap[{o[2]}, {o[3]}]" for o in overlaps]))
         
         # Add gaps for deleted granules and merge with existing gaps
         cursor.execute("""
@@ -136,11 +134,12 @@ def add_gaps(
         """)
         
         conn.commit()
-        logger.info(f"Added gaps to collection {collection_id}")
+        logger.debug(f"Added gaps to collection {collection_id}")
         
     except Exception as e:
         conn.rollback()
         logger.error(f"Error processing collection {collection_id}: {str(e)}")
+        logger.debug(traceback.format_exc())
         raise e
     finally:
         cursor.close()
@@ -162,10 +161,11 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
     # Parse records and group by collection
     records_by_collection = {}
     all_collections = set()
+    
     for record in event["Records"]:
         # Check which queue this event is from 
         if record["eventSourceARN"] == os.getenv("DELETION_QUEUE_ARN"):
-            logger.info("Adding gaps for deleted granules")
+            logger.debug("Adding gaps for deleted granules")
             delete = True
         r = json.loads(json.loads(record["body"])["Message"])["record"]
         collection_id = r["collectionId"].replace(".", "_")
@@ -183,7 +183,10 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
         )
         records_by_collection[collection_id]["message_ids"].append(record["messageId"])
         all_collections.add(collection_id)
-    logger.info(f"Grouped {sum(len(recs["records"]) for recs in records_by_collection.values())} records into {len(all_collections)} collections")
+    
+    total_records = sum(len(recs["records"]) for recs in records_by_collection.values())
+    operation_type = "gap addition" if delete else "gap update"
+    logger.info(f"Processing {operation_type}: {total_records} records across {len(all_collections)} collections")
 
     failures = []
     with get_db_connection() as conn:
@@ -199,16 +202,15 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
                 # Verify this collection has been initialized
                 if not validate_collections({collection_id}, conn):
                     failures.extend(data["message_ids"])
-                    raise Exception(
-                        "Error: Records for uninitialized collections detected, aborting."
-                    )
+                    continue
 
-                logger.info(f"Processing collection {collection_id} with {len(data["records"])} records")
+                logger.debug(f"Processing collection {collection_id} with {len(data["records"])} records")
                 buffer = StringIO()
                 for r in data["records"]:
                     line = f"{r['collection_id']}\t{r['start_ts']}\t{r['end_ts']}\n"
                     buffer.write(line)
                 buffer.seek(0)
+                
                 if delete:
                     add_gaps(collection_id, buffer, conn)
                 else:
@@ -217,6 +219,12 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
             except Exception as e:
                 logger.error(f"Failed to process collection {collection_id}: {str(e)}")
                 failures.extend(data["message_ids"])
+
+    # Summary logging
+    if failures:
+        logger.warning(f"{operation_type} completed with failures: {len(failures)} failed messages from {len(all_collections)} collections")
+    else:
+        logger.info(f"{operation_type} completed successfully: {len(all_collections)} collections processed")
 
     # Return failed messages to the queue
     return {

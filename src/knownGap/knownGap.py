@@ -108,7 +108,9 @@ def lambda_handler(event: Dict[str, Any], context: Context) -> Dict[str, Any]:
     validate_environment_variables(["RDS_SECRET", "RDS_PROXY_HOST"])
     http_method = event.get("httpMethod", "")
     resource_path = event.get("path", "")
-    logger.info(f"Got HTTP {http_method} for {resource_path}")
+    
+    logger.debug(f"Got HTTP {http_method} for {resource_path}")
+    
     try:
         with get_db_connection() as conn:
 
@@ -117,42 +119,46 @@ def lambda_handler(event: Dict[str, Any], context: Context) -> Dict[str, Any]:
                 try:
                     payload = json.loads(event["body"])["reasons"]
                 except Exception as e:
-                    logger.error(f"Invalid request: {str(e)}")
-                    logger.error(traceback.format_exc())
+                    logger.warning(f"Invalid request: {str(e)}")
                     return build_response(
                         400, {"message": f"Invalid request: {str(e)}"}
                     )
+                
                 try:
                     add_reasons(payload, conn)
+                    logger.info(f"Successfully added {len(payload)} reasons")
                     return build_response(
-                        201, {"message": f"Sucessfully added reasons for: {payload}"}
+                        201, {"message": f"Successfully added {len(payload)} reasons"}
                     )
                 except Exception as e:
-                    logger.error(f"Server error: {str(e)}")
-                    logger.error(traceback.format_exc())
+                    logger.error(f"Failed to add reasons: {str(e)}")
+                    logger.debug(traceback.format_exc())
                     return build_response(500, {"message": f"Server error: {str(e)}"})
 
-            # Retreive reasons
+            # Retrieve reasons
             elif http_method == "GET":
                 try:
                     cid, start, end, reason = parse_event(event)
                 except Exception as e:
-                    logger.error(f"Invalid request: {str(e)}")
+                    logger.warning(f"Invalid GET request parameters: {str(e)}")
                     return build_response(400, {"message": f"Bad Request: {str(e)}"})
 
                 try:
                     reasons = get_reasons(cid, start, end, conn)
+                    logger.info(f"Reasons retrieved: {cid} - {len(reasons)} reasons found")
                     return build_response(200, {"reasons": reasons})
                 except Exception as e:
-                    logger.error(f"Server error: {str(e)}")
-                    logger.error(traceback.format_exc())
+                    logger.error(f"Failed to retrieve reasons for {cid}: {str(e)}")
+                    logger.debug(traceback.format_exc())
                     return build_response(500, {"message": f"Server error: {str(e)}"})
 
             else:
+                logger.warning(f"Unsupported method: {http_method}")
                 return build_response(
                     501, {"message": "Requested method not implemented"}
                 )
+                
     except Exception as e:
         logger.error(f"Error processing request: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.debug(traceback.format_exc())
         return build_response(500, {"message": "Unexpected error ocurred"})

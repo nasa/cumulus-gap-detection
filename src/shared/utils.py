@@ -57,7 +57,7 @@ def get_connection_pool() -> ConnectionPool:
 
     if _pool is None:
         db_config = get_db_config(os.getenv("RDS_SECRET"))
-        logger.info(f"Initializing connection pool to: {os.getenv('RDS_PROXY_HOST')}")
+        logger.debug(f"Initializing connection pool to: {os.getenv('RDS_PROXY_HOST')}")
 
         conn_str = (
             f"host={os.getenv('RDS_PROXY_HOST')} "
@@ -80,7 +80,7 @@ def get_connection_pool() -> ConnectionPool:
             max_idle=900,  # 15 minute idle timeout
         )
 
-        logger.info("Connection pool initialized")
+        logger.debug("Connection pool initialized")
 
     return _pool
 
@@ -128,7 +128,7 @@ def get_db_connection(retry_count=3):
                     pass
 
             if attempt < retry_count - 1:
-                logger.warning(
+                logger.debug(
                     f"DB connection error (attempt {attempt+1}/{retry_count}): {str(e)}"
                 )
                 time.sleep(0.2 * (2**attempt))
@@ -172,13 +172,13 @@ def get_granule_gap(shortname: str, versionid: str) -> int:
     table_name = os.environ["TOLERANCE_TABLE"]
     table = dynamodb.Table(table_name)
 
-    logger.info(
+    logger.debug(
         f"Querying DynamoDB with shortname='{shortname}', versionid='{versionid}'"
     )
 
     try:
         response = table.get_item(Key={"shortname": shortname, "versionid": versionid})
-        logger.info(f"DynamoDB Response: {response}")
+        logger.debug(f"DynamoDB Response: {response}")
 
         return (
             int(response["Item"]["granulegap"])
@@ -187,7 +187,7 @@ def get_granule_gap(shortname: str, versionid: str) -> int:
         )
 
     except Exception as e:
-        logger.error(f"Error fetching granulegap from DynamoDB: {e}")
+        logger.error(f"Failed to fetch tolerance for {shortname} v{versionid}: {str(e)}")
         raise e
 
 
@@ -277,7 +277,7 @@ def fetch_time_gaps(
     rows = cursor.fetchall()
 
     if rows and rows[-1][1].year == 9999:
-        logger.info("Replacing end_ts with current datetime due to 9999 year.")
+        logger.debug("Replacing end_ts with current datetime due to 9999 year.")
         rows[-1] = (rows[-1][0], datetime.now())
 
     return rows
