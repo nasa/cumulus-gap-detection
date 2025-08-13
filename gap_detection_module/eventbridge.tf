@@ -1,5 +1,6 @@
 resource "aws_iam_role" "gap_detection_eventbridge_scheduler_execution_role" {
   name = "${var.DEPLOY_NAME}-gap-detection-eventbridge-role"
+
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -17,6 +18,7 @@ resource "aws_iam_role" "gap_detection_eventbridge_scheduler_execution_role" {
 resource "aws_iam_role_policy" "gap_detection_eventbridge_scheduler_policy" {
   name = "${var.DEPLOY_NAME}-gap-detection-eventbridge-policy"
   role = aws_iam_role.gap_detection_eventbridge_scheduler_execution_role.id
+
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -28,23 +30,24 @@ resource "aws_iam_role_policy" "gap_detection_eventbridge_scheduler_policy" {
     ]
   })
 }
-
 resource "aws_scheduler_schedule" "gap_reporter_scheduler" {
-  name                = "${var.DEPLOY_NAME}-gap_detection_reporter"
-  group_name          = "default"
+  name       = "${var.DEPLOY_NAME}-gap_detection_reporter"
+  group_name = "default"
+
   schedule_expression = "rate(7 days)"
-  
+
   flexible_time_window {
     mode = "OFF"
   }
-  
+
   target {
-    arn      = aws_lambda_function.gap_functions["gapReporter"].arn
+    arn      = "arn:aws:scheduler:::aws-sdk:lambda:invoke"
     role_arn = aws_iam_role.gap_detection_eventbridge_scheduler_execution_role.arn
-    
-    # Optional: Add input if needed
+
     input = jsonencode({
-      "source": "eventbridge-scheduler"
+      FunctionName   = aws_lambda_function.gap_functions["gapReporter"].arn,
+      InvocationType = "Event",
+      Payload        = jsonencode("foo")
     })
   }
 }
