@@ -227,6 +227,7 @@ def fetch_time_gaps(
                %s::timestamp as end_date, 
                %s as tolerance
     )
+
     -- Calculate where reasons overlap gaps
     SELECT DISTINCT
         -- Intersection start
@@ -235,6 +236,8 @@ def fetch_time_gaps(
         -- Intersection end
         LEAST(g.end_ts, COALESCE(r.end_ts, g.end_ts)) as end_ts,
         r.reason
+
+    -- Filter to query range and tolerance
     FROM gaps g
     CROSS JOIN params p
     LEFT JOIN reasons r ON 
