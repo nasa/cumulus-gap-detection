@@ -49,7 +49,13 @@ variable "sqs_trigger_process_gaps_batch_size" {
 variable "sqs_trigger_max_batch_window" {
   description = "The maximum amount of time to gather records before invoking the function, in seconds"
   type        = string
-  default     = 10
+  default     = 30
+}
+
+variable "sqs_trigger_max_concurrency" {
+  description = "The maximum number of concurrent executions the SQS event source can trigger"
+  type        = string
+  default     = 4
 }
 
 variable "security_group_ids" {

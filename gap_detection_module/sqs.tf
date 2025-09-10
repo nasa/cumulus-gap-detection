@@ -5,7 +5,7 @@ resource "aws_sqs_queue" "gap_dlq" {
 
 resource "aws_sqs_queue" "gap_detection_ingest_queue" {
   name                       = "${var.DEPLOY_NAME}-gapDetectionIngestQueue"
-  visibility_timeout_seconds = 10
+  visibility_timeout_seconds = 60
   message_retention_seconds  = 1209600
   sqs_managed_sse_enabled    = true
   receive_wait_time_seconds  = 20

@@ -73,7 +73,7 @@ resource "aws_lambda_event_source_mapping" "ingest_sqs_trigger" {
   function_response_types = ["ReportBatchItemFailures"]
   # Prevent over-invocation to avoid contention
   scaling_config {
-    maximum_concurrency = 16
+    maximum_concurrency = var.sqs_trigger_max_concurrency
   }
 }
 
@@ -98,7 +98,7 @@ resource "aws_lambda_event_source_mapping" "deletion_sqs_trigger" {
 
   scaling_config {
 
-    maximum_concurrency = 16
+    maximum_concurrency = var.sqs_trigger_max_concurrency
 
   }
 
