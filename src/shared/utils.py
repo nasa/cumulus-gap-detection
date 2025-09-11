@@ -222,57 +222,41 @@ def fetch_time_gaps(
     query = f"""
     -- Bind Parameters
     WITH params AS (
-        SELECT %s as collection_id, %s::timestamp as start_date, %s::timestamp as end_date, %s as tolerance
-    ),
-
-    -- Filter gaps and reasons to query range
-    filtered_gaps AS (
-        SELECT g.start_ts, g.end_ts 
-        FROM gaps g, params p
-        WHERE g.collection_id = p.collection_id
-        AND (p.start_date IS NULL OR g.end_ts > p.start_date)
-        AND (p.end_date IS NULL OR g.start_ts < p.end_date)
-    ),
-    filtered_reasons AS (
-        SELECT r.start_ts, r.end_ts, r.reason 
-        FROM reasons r, params p
-        WHERE r.collection_id = p.collection_id
-        AND (p.start_date IS NULL OR r.end_ts > p.start_date)
-        AND (p.end_date IS NULL OR r.start_ts < p.end_date)
-    ),
-
-    -- Extract all boundary points from gaps and reasons
-    boundaries AS (
-        SELECT start_ts AS t FROM filtered_gaps
-        UNION SELECT end_ts FROM filtered_gaps
-        UNION SELECT start_ts FROM filtered_reasons
-        UNION SELECT end_ts FROM filtered_reasons
-    ),
-
-    -- Construct consecutive segments from points
-    segments AS (
-        SELECT 
-            t AS start_ts,
-            LEAD(t) OVER (ORDER BY t) AS end_ts
-        FROM boundaries
+        SELECT %s as collection_id, 
+               %s::timestamp as start_date, 
+               %s::timestamp as end_date, 
+               %s as tolerance
     )
 
-    -- Label segments based on alignment
-    SELECT 
-        s.start_ts,
-        s.end_ts,
-        r.reason
-    FROM segments s
-    JOIN filtered_gaps g ON tsrange(s.start_ts, s.end_ts) <@ tsrange(g.start_ts, g.end_ts)
-    LEFT JOIN filtered_reasons r ON tsrange(s.start_ts, s.end_ts) <@ tsrange(r.start_ts, r.end_ts)
-    WHERE s.end_ts IS NOT NULL
+    -- Calculate where reasons overlap gaps
+    SELECT DISTINCT
+        -- Intersection start
+        GREATEST(g.start_ts, COALESCE(r.start_ts, g.start_ts)) as start_ts,
 
-    -- Apply tolerance filter
-    AND EXTRACT(EPOCH FROM (s.end_ts - s.start_ts)) >= (SELECT tolerance FROM params)
+        -- Intersection end
+        LEAST(g.end_ts, COALESCE(r.end_ts, g.end_ts)) as end_ts,
+        r.reason
+
+    -- Filter to query range and tolerance
+    FROM gaps g
+    CROSS JOIN params p
+    LEFT JOIN reasons r ON 
+        r.collection_id = p.collection_id
+        AND tsrange(g.start_ts, g.end_ts) && tsrange(r.start_ts, r.end_ts)
+        AND (p.start_date IS NULL OR r.end_ts > p.start_date)
+        AND (p.end_date IS NULL OR r.start_ts < p.end_date)
+    WHERE g.collection_id = p.collection_id
+        AND (p.start_date IS NULL OR g.end_ts > p.start_date)
+        AND (p.end_date IS NULL OR g.start_ts < p.end_date)
+        AND EXTRACT(EPOCH FROM (g.end_ts - g.start_ts)) >= p.tolerance
+        AND EXTRACT(EPOCH FROM (
+            LEAST(g.end_ts, COALESCE(r.end_ts, g.end_ts)) - 
+            GREATEST(g.start_ts, COALESCE(r.start_ts, g.start_ts))
+        )) >= p.tolerance
     {known_filter}
-    ORDER BY s.start_ts
+    ORDER BY start_ts;
     """
-    
+   
     cursor.execute(query, params)
     rows = cursor.fetchall()
 
