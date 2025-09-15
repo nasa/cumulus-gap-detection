@@ -11,3 +11,5 @@ pytest-mock
 jsonschema==4.23.0
 aiohttp
 aioboto3
+pytest-asyncio
+aioresponses
