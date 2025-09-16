@@ -7,6 +7,5 @@ RUN pip install -U -r test_requirements.txt
 COPY test/ /app/test/
 COPY src/ /app/src/
 COPY src/shared/gap_schema.sql /app/
-COPY src/knownGap/schema.json /app/
 
 ENTRYPOINT []

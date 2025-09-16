@@ -9,7 +9,6 @@ on:
       - GESDISCUMU-5118-migrate-gap-dection-codebase-and-template
 jobs:
   build-unit-tests:
-    if: false  # Temporary disabling the build-unit-tests jobs. We have plans to fix the unit tests before renabling this job.
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

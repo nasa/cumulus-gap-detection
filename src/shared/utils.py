@@ -78,6 +78,7 @@ def get_connection_pool() -> ConnectionPool:
             max_size=10,
             max_lifetime=7200,  # 2 hours
             max_idle=900,  # 15 minute idle timeout
+            open=True
         )
 
         logger.debug("Connection pool initialized")

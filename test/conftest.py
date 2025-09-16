@@ -41,6 +41,7 @@ def setup_database():
             init_sql = f.read()
         with conn.cursor() as cur:
             cur.execute("DROP TABLE IF EXISTS gaps CASCADE;")
+            cur.execute("DROP TABLE IF EXISTS reasons CASCADE;")
             cur.execute("DROP TABLE IF EXISTS collections CASCADE;")
             cur.execute(init_sql)
         
@@ -59,9 +60,15 @@ def setup_test_data():
     
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("TRUNCATE TABLE gaps")
+            # Clear existing data
+            cur.execute("TRUNCATE TABLE gaps CASCADE")
+            cur.execute("TRUNCATE TABLE reasons CASCADE")
             cur.execute("TRUNCATE TABLE collections CASCADE")
+            
+            # Disable trigger to prevent automatic gap creation
             cur.execute("ALTER TABLE collections DISABLE TRIGGER collection_insert_trigger")
+            
+            # Insert test collections
             cur.execute("""
                 INSERT INTO collections (collection_id, temporal_extent_start, temporal_extent_end)
                 VALUES (%s, %s, %s), (%s, %s, %s)
@@ -69,6 +76,8 @@ def setup_test_data():
                 TEST_COLLECTION_ID, DEFAULT_DATE, DEFAULT_END_DATE,
                 SECOND_COLLECTION_ID, DEFAULT_DATE, DEFAULT_END_DATE
             ))
+            
+            # Re-enable trigger
             cur.execute("ALTER TABLE collections ENABLE TRIGGER collection_insert_trigger")
         conn.commit()
     
@@ -86,28 +95,48 @@ def mock_sql():
 
 # Helper Functions
 def create_test_partition(collection_id, conn):
-    """Create a test partition for a collection."""
+    """Create test partitions for both gaps and reasons tables."""
     with conn.cursor() as cur:
         safe_collection_id = re.sub(r'\W+', '_', collection_id)
-        partition_name = f"gaps_{safe_collection_id}"
+        
+        # Create gaps partition
+        gaps_partition_name = f"gaps_{safe_collection_id}"
         cur.execute("""
             SELECT 1 FROM pg_class c
             JOIN pg_namespace n ON n.oid = c.relnamespace
             WHERE c.relname = %s AND n.nspname = 'public'
-        """, (partition_name,))
+        """, (gaps_partition_name,))
+        
         if cur.fetchone() is None:
             cur.execute(
                 SQL("CREATE TABLE {} PARTITION OF gaps FOR VALUES IN ({})").format(
-                    Identifier(partition_name), Literal(collection_id)
+                    Identifier(gaps_partition_name), Literal(collection_id)
                 )
             )
-            constraint_name = f"{partition_name}_no_overlap"
+            # Add exclusion constraint to prevent overlapping time ranges
+            constraint_name = f"{gaps_partition_name}_no_overlap"
             cur.execute(
                 SQL("ALTER TABLE {} ADD CONSTRAINT {} EXCLUDE USING gist (tsrange(start_ts, end_ts) WITH &&)").format(
-                    Identifier(partition_name), Identifier(constraint_name)
+                    Identifier(gaps_partition_name), Identifier(constraint_name)
                 )
             )
-    return partition_name
+        
+        # Create reasons partition
+        reasons_partition_name = f"reasons_{safe_collection_id}"
+        cur.execute("""
+            SELECT 1 FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE c.relname = %s AND n.nspname = 'public'
+        """, (reasons_partition_name,))
+        
+        if cur.fetchone() is None:
+            cur.execute(
+                SQL("CREATE TABLE {} PARTITION OF reasons FOR VALUES IN ({})").format(
+                    Identifier(reasons_partition_name), Literal(collection_id)
+                )
+            )
+    
+    return gaps_partition_name, reasons_partition_name
 
 def create_granule(start, end, collection_id=TEST_COLLECTION_ID):
     return {
@@ -144,6 +173,7 @@ def create_sqs_event(records_data):
     return {"Records": sqs_records}
 
 def insert_gap(collection_id, start_ts, end_ts):
+    """Insert a gap without a reason."""
     from utils import get_db_connection
     
     with get_db_connection() as conn:
@@ -152,6 +182,24 @@ def insert_gap(collection_id, start_ts, end_ts):
                 INSERT INTO gaps (collection_id, start_ts, end_ts)
                 VALUES (%s, %s, %s)
             """, (collection_id, start_ts, end_ts))
+
+def insert_gap_with_reason(collection_id, start_ts, end_ts, reason):
+    """Insert a gap and its associated reason."""
+    from utils import get_db_connection
+    
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            # Insert the gap
+            cur.execute("""
+                INSERT INTO gaps (collection_id, start_ts, end_ts)
+                VALUES (%s, %s, %s)
+            """, (collection_id, start_ts, end_ts))
+            
+            # Insert the reason
+            cur.execute("""
+                INSERT INTO reasons (collection_id, start_ts, end_ts, reason)
+                VALUES (%s, %s, %s, %s)
+            """, (collection_id, start_ts, end_ts, reason))
 
 def get_gaps(collection_id):
     from utils import get_db_connection
@@ -162,6 +210,25 @@ def get_gaps(collection_id):
                 "SELECT start_ts, end_ts FROM gaps WHERE collection_id = %s ORDER BY start_ts",
                 (collection_id,)
             )
+            return cur.fetchall()
+
+def get_gaps_with_reasons(collection_id):
+    """Get gaps with their associated reasons."""
+    from utils import get_db_connection
+    
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT g.start_ts, g.end_ts, r.reason
+                FROM gaps g
+                LEFT JOIN reasons r ON (
+                    g.collection_id = r.collection_id 
+                    AND g.start_ts = r.start_ts 
+                    AND g.end_ts = r.end_ts
+                )
+                WHERE g.collection_id = %s 
+                ORDER BY g.start_ts
+            """, (collection_id,))
             return cur.fetchall()
 
 def get_gap_count(collection_id):
@@ -195,62 +262,85 @@ def create_api_test_event(http_method, path, body=None, query_string_parameters=
     return event
 
 def get_record(conn, collection_id, start_ts, end_ts):
+    """Get a gap record with its reason if available."""
     with conn.cursor() as cur:
         cur.execute("""
-            SELECT gap_id, collection_id, start_ts, end_ts, reason 
-            FROM gaps 
-            WHERE collection_id = %s
-            AND start_ts = %s
-            AND end_ts = %s
+            SELECT g.gap_id, g.collection_id, g.start_ts, g.end_ts, r.reason 
+            FROM gaps g
+            LEFT JOIN reasons r ON (
+                g.collection_id = r.collection_id 
+                AND g.start_ts = r.start_ts 
+                AND g.end_ts = r.end_ts
+            )
+            WHERE g.collection_id = %s
+            AND g.start_ts = %s
+            AND g.end_ts = %s
         """, (collection_id, start_ts, end_ts))
         return cur.fetchone()
 
 def seed_test_data(test_data, collection_id=TEST_COLLECTION_ID):
     """Seed test data for knownGap tests."""
-
     from utils import get_db_connection
+    
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT 1 FROM collections WHERE collection_id = %s", (TEST_COLLECTION_ID,))
+            # Ensure collection exists
+            cur.execute("SELECT 1 FROM collections WHERE collection_id = %s", (collection_id,))
             if not cur.fetchone():
                 cur.execute(
                     "INSERT INTO collections (collection_id, temporal_extent_start, temporal_extent_end) VALUES (%s, %s, %s)",
-                    (TEST_COLLECTION_ID, DEFAULT_DATE, DEFAULT_END_DATE)
+                    (collection_id, DEFAULT_DATE, DEFAULT_END_DATE)
                 )
             
-            safe_id = re.sub(r'\W+', '_', TEST_COLLECTION_ID)
-            partition_name = f"gaps_{safe_id}"
+            # Ensure partitions exist
+            create_test_partition(collection_id, conn)
             
-            # Check if partition exists
-            cur.execute(f"""
-                SELECT 1 FROM pg_class c 
-                JOIN pg_namespace n ON n.oid = c.relnamespace 
-                WHERE c.relname = '{partition_name}' AND n.nspname = 'public'
-            """)
-            
-            if not cur.fetchone():
-                # Create partition
-                cur.execute(f"""
-                    CREATE TABLE {partition_name} PARTITION OF gaps 
-                    FOR VALUES IN ('{TEST_COLLECTION_ID}')
-                """)
-                cur.execute(f"""
-                    ALTER TABLE {partition_name} ADD CONSTRAINT {partition_name}_no_overlap
-                    EXCLUDE USING gist (tsrange(start_ts, end_ts) WITH &&)
-                """)
-            
-            cur.execute("DELETE FROM gaps WHERE collection_id = %s", (TEST_COLLECTION_ID,))
+            # Clear existing test data
+            cur.execute("DELETE FROM gaps WHERE collection_id = %s", (collection_id,))
+            cur.execute("DELETE FROM reasons WHERE collection_id = %s", (collection_id,))
             
             # Insert test data
             for data in test_data:
+                start_ts = data.get('start_ts')
+                end_ts = data.get('end_ts')
+                reason = data.get('reason')
+                
+                # Insert gap
                 cur.execute(
-                    "INSERT INTO gaps (collection_id, start_ts, end_ts, reason) VALUES (%s, %s, %s, %s)", 
-                    (
-                        TEST_COLLECTION_ID, 
-                        data.get('start_ts'),
-                        data.get('end_ts'),
-                        data.get('reason')
-                    )
+                    "INSERT INTO gaps (collection_id, start_ts, end_ts) VALUES (%s, %s, %s)", 
+                    (collection_id, start_ts, end_ts)
                 )
+                
+                # Insert reason if provided
+                if reason:
+                    cur.execute(
+                        "INSERT INTO reasons (collection_id, start_ts, end_ts, reason) VALUES (%s, %s, %s, %s)",
+                        (collection_id, start_ts, end_ts, reason)
+                    )
             
+        conn.commit()
+
+def get_reason(collection_id, start_ts, end_ts):
+    """Get the reason for a specific gap."""
+    from utils import get_db_connection
+    
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT reason FROM reasons 
+                WHERE collection_id = %s AND start_ts = %s AND end_ts = %s
+            """, (collection_id, start_ts, end_ts))
+            result = cur.fetchone()
+            return result[0] if result else None
+
+def insert_reason(collection_id, start_ts, end_ts, reason):
+    """Insert a reason for an existing gap."""
+    from utils import get_db_connection
+    
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO reasons (collection_id, start_ts, end_ts, reason)
+                VALUES (%s, %s, %s, %s)
+            """, (collection_id, start_ts, end_ts, reason))
         conn.commit()
