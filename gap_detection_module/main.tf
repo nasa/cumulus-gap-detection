@@ -43,7 +43,7 @@ locals {
     }
     gapReporter = {
       timeout     = 900
-      memory_size = 512
+      memory_size = 1024
       variables = {
         RDS_SECRET        = aws_secretsmanager_secret.rds_admin_login.name
         RDS_PROXY_HOST    = aws_db_proxy.rds_proxy.endpoint
