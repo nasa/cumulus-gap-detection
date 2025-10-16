@@ -1,0 +1,5 @@
+{
+    "httpMethod": "POST",
+    "path": "/init",
+    "body": "{\"collections\":[{\"short_name\":\"short_name\",\"version\":\"00\",\"tolerance\":12}]}"
+}
