@@ -177,3 +177,25 @@ resource "aws_lambda_permission" "api_gateway_permissions" {
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/*/${each.key}"
 }
+
+resource "aws_lambda_function" "authorizer" {
+  function_name    = "${var.DEPLOY_NAME}-gapAuthorizer"
+  filename         = "${path.module}/artifacts/functions/authorizer.zip"
+  source_code_hash = filebase64sha256("${path.module}/artifacts/functions/authorizer.zip")
+  role             = var.lambda_processing_role_arn
+  runtime          = "provided.al2023"
+  handler          = "bootstrap"
+  #architectures    = ["arm64"]
+  #timeout          = 10
+  #memory_size      = 256
+  
+  environment {
+    variables = {
+      JWKS_URL            = var.jwks_url
+      ISSUER              = var.issuer
+      AUTHORIZATION_CLAIM = var.authorization_claim
+      ADMIN_VALUE         = var.admin_value
+      PUBLIC_VALUE        = var.public_value
+    }
+  }
+}

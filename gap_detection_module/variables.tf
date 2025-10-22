@@ -27,8 +27,6 @@ variable "deletion_protection" {
   default     = true
 }
 
-
-
 variable "snapshot_identifier" {
   description = "Snapshot identifer to create/restore database from a snapshot"
   default     = null
@@ -96,3 +94,27 @@ variable "state_machine_name_lst" {
   type        = list(string)
 }
 
+variable "jwks_url" {
+  type        = string
+  description = "JWKS endpoint for token verification"
+}
+
+variable "issuer" {
+  type        = string
+  description = "Expected JWT issuer claim value"
+}
+
+variable "authorization_claim" {
+  type        = string
+  description = "Authorization claim name"
+}
+
+variable "admin_value" {
+  type        = string
+  description = "Auth claim value for admin access"
+}
+
+variable "public_value" {
+  type        = string
+  description = "Auth claim value for public access"
+}

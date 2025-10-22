@@ -3,6 +3,18 @@ info:
   title: "${DEPLOY_NAME}-TemporalGapAPI"
   description: "Temporal Gap API"
   version: "1.0.0"
+components:
+  securitySchemes:
+    JWTAuthorizer:
+      type: apiKey
+      name: Authorization
+      in: header
+      x-amazon-apigateway-authtype: custom
+      x-amazon-apigateway-authorizer:
+        type: request
+        authorizerUri: "arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${authorizer_arn}/invocations"
+        authorizerResultTtlInSeconds: 300
+        identitySource: method.request.header.Authorization
 paths:
   /gapConfig:
     post:
@@ -62,6 +74,8 @@ paths:
           description: "200 response"
   /knownGap:
     get:
+      security:
+        - JWTAuthorizer: []
       parameters:
         - name: "short_name"
           in: "query"
@@ -91,6 +105,8 @@ paths:
         "200":
           description: "200 response"
     post:
+      security:
+        - JWTAuthorizer: []
       x-amazon-apigateway-integration:
         uri: "${lambda_invoke_arns.knownGap}"
         httpMethod: "POST"
