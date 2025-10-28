@@ -194,8 +194,8 @@ resource "aws_lambda_function" "authorizer" {
       JWKS_URL            = var.jwks_url
       ISSUER              = var.issuer
       AUTHORIZATION_CLAIM = var.authorization_claim
-      ADMIN_VALUE         = var.admin_value
-      PUBLIC_VALUE        = var.public_value
+      ADMIN_ROLE         = var.admin_role
+      PUBLIC_ROLE        = var.public_role
     }
   }
 }

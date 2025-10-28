@@ -109,12 +109,12 @@ variable "authorization_claim" {
   description = "Authorization claim name"
 }
 
-variable "admin_value" {
+variable "admin_role" {
   type        = string
   description = "Auth claim value for admin access"
 }
 
-variable "public_value" {
+variable "public_role" {
   type        = string
   description = "Auth claim value for public access"
 }

@@ -1,10 +1,10 @@
 resource "aws_api_gateway_rest_api" "api" {
   name = "${var.DEPLOY_NAME}-TemporalGapAPI"
   body = templatefile("${path.module}/openapi.yaml", local.openapi_template_vars)
-  #endpoint_configuration {
-  #  types           = ["PRIVATE"]
-  #  ip_address_type = "dualstack" # Required for Private API
-  #}
+  endpoint_configuration {
+    types           = ["PRIVATE"]
+    ip_address_type = "dualstack" # Required for Private API
+  }
 }
 
 # This is a placeholder policy attached to the API to bypass a "Private REST API doesn't have a resource policy attached to it" error. 
