@@ -185,8 +185,8 @@ resource "aws_lambda_function" "authorizer" {
   role             = var.lambda_processing_role_arn
   runtime          = "provided.al2023"
   handler          = "bootstrap"
-  #architectures    = ["arm64"]
-  #timeout          = 10
+  architectures    = ["arm64"]
+  timeout          = 5
   #memory_size      = 256
   
   environment {

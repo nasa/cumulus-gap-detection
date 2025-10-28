@@ -119,7 +119,6 @@ resource "aws_rds_cluster_instance" "cluster_instances" {
   instance_class             = "db.serverless"
   engine                     = aws_rds_cluster.rds_cluster.engine
   engine_version             = aws_rds_cluster.rds_cluster.engine_version
-  monitoring_interval        = 10
 }
 
 ## =============================================================================

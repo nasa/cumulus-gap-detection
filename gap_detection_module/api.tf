@@ -46,14 +46,6 @@ resource "aws_api_gateway_stage" "stage" {
   stage_name    = "${var.DEPLOY_NAME}-TemporalGapAPI"
 }
 
-#resource "aws_api_gateway_authorizer" "authorizer" {
-#  name                   = "${var.DEPLOY_NAME}-Authorizer"
-#  rest_api_id            = aws_api_gateway_rest_api.api.id
-#  authorizer_uri         = aws_lambda_function.authorizer.invoke_arn
-#  # authorizer_credentials = var.api_gateway_authorizer_role_arn 
-#  type                   = "REQUEST"
-#  identity_source        = "method.request.header.Authorization"
-#}
 resource "aws_lambda_permission" "authorizer_permission" {
   statement_id  = "AllowAPIGatewayInvokeAuthorizer"
   action        = "lambda:InvokeFunction"
@@ -61,11 +53,3 @@ resource "aws_lambda_permission" "authorizer_permission" {
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/authorizers/*"
 }
-#
-#resource "aws_lambda_permission" "authorizer_permission" {
-#  statement_id  = "AllowAPIGatewayInvokeAuthorizer"
-#  action        = "lambda:InvokeFunction"
-#  function_name = aws_lambda_function.authorizer.function_name
-#  principal     = "apigateway.amazonaws.com"
-#  source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/authorizers/${aws_api_gateway_authorizer.authorizer.id}"
-#}
