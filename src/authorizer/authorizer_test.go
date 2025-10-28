@@ -28,6 +28,9 @@ var (
 	testPrivateKey *rsa.PrivateKey
 	testPublicKey  *rsa.PublicKey
 	jwksServer     *httptest.Server
+	authorizationClaim string
+	adminRole          string
+	publicRole         string
 )
 
 func TestMain(m *testing.M) {
@@ -59,6 +62,9 @@ func TestMain(m *testing.M) {
 
 	os.Setenv("JWKS_URL", jwksServer.URL)
 	os.Setenv("ISSUER", testIssuer)
+	os.Setenv("AUTHORIZATION_CLAIM", "xy")
+	os.Setenv("ADMIN_ROLE", "x")
+	os.Setenv("PUBLIC_ROLE", "x")
 
 	code := m.Run()
 
@@ -152,7 +158,7 @@ func TestHandler_InitJWKSFailure(t *testing.T) {
 		MethodArn:  testMethodArn,
 		HTTPMethod: "GET",
 		Path:       "/getTimeGaps",
-		Headers:    map[string]string{"Authorization": "Bearer " + createToken(jwt.MapClaims{authorizationClaim: publicValue})},
+		Headers:    map[string]string{"Authorization": "Bearer " + createToken(jwt.MapClaims{authorizationClaim: publicRole})},
 	})
 
 	if err == nil {
@@ -188,42 +194,42 @@ func TestHandler(t *testing.T) {
 		},
 		{
 			name:       "expired token",
-			headers:    map[string]string{"Authorization": "Bearer " + createToken(jwt.MapClaims{authorizationClaim: adminValue, "exp": time.Now().Add(-time.Hour).Unix()})},
+			headers:    map[string]string{"Authorization": "Bearer " + createToken(jwt.MapClaims{authorizationClaim: adminRole, "exp": time.Now().Add(-time.Hour).Unix()})},
 			httpMethod: "GET",
 			path:       "/getTimeGaps",
 			wantEffect: "Deny",
 		},
 		{
 			name:       "wrong issuer",
-			headers:    map[string]string{"Authorization": "Bearer " + createToken(jwt.MapClaims{authorizationClaim: adminValue, "iss": "https://wrong.issuer"})},
+			headers:    map[string]string{"Authorization": "Bearer " + createToken(jwt.MapClaims{authorizationClaim: adminRole, "iss": "https://wrong.issuer"})},
 			httpMethod: "GET",
 			path:       "/getTimeGaps",
 			wantEffect: "Deny",
 		},
 		{
 			name:       "admin on POST",
-			headers:    map[string]string{"Authorization": "Bearer " + createToken(jwt.MapClaims{authorizationClaim: adminValue})},
+			headers:    map[string]string{"Authorization": "Bearer " + createToken(jwt.MapClaims{authorizationClaim: adminRole})},
 			httpMethod: "POST",
 			path:       "/gapConfig",
 			wantEffect: "Allow",
 		},
 		{
 			name:       "public on POST",
-			headers:    map[string]string{"Authorization": "Bearer " + createToken(jwt.MapClaims{authorizationClaim: publicValue})},
+			headers:    map[string]string{"Authorization": "Bearer " + createToken(jwt.MapClaims{authorizationClaim: publicRole})},
 			httpMethod: "POST",
 			path:       "/gapConfig",
 			wantEffect: "Deny",
 		},
 		{
 			name:       "admin on GET",
-			headers:    map[string]string{"Authorization": "Bearer " + createToken(jwt.MapClaims{authorizationClaim: adminValue})},
+			headers:    map[string]string{"Authorization": "Bearer " + createToken(jwt.MapClaims{authorizationClaim: adminRole})},
 			httpMethod: "GET",
 			path:       "/getTimeGaps",
 			wantEffect: "Allow",
 		},
 		{
 			name:       "public on GET",
-			headers:    map[string]string{"Authorization": "Bearer " + createToken(jwt.MapClaims{authorizationClaim: publicValue})},
+			headers:    map[string]string{"Authorization": "Bearer " + createToken(jwt.MapClaims{authorizationClaim: publicRole})},
 			httpMethod: "GET",
 			path:       "/getTimeGaps",
 			wantEffect: "Allow",
