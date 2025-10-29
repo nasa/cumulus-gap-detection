@@ -14,20 +14,19 @@ import (
 	"go.uber.org/zap"
 )
 
-// Generic placeholders until IdP is set up
-// TODO Param from envvars
-//const (
-//	authorizationClaim = "roles"
-//	adminRole          = "admin"
-//	publicRole        = "public"
-//)
-
 var (
 	jwks     *keyfunc.JWKS
 	jwksOnce sync.Once
 	jwksErr  error
 	logger   *zap.Logger
+
+	config struct {
+		authorizationClaim string
+		adminRole          string
+		publicRole         string
+	}
 )
+
 
 func init() {
 	var err error
@@ -36,14 +35,22 @@ func init() {
 	if err != nil {
 		panic(err)
 	}
-	authorizationClaim = os.Getenv("AUTHORIZATION_CLAIM")
-	adminRole = os.Getenv("ADMIN_ROLE")
-	publicRole = os.Getenv("PUBLIC_ROLE")
+	setEnv := func(k string) string {
+		v := os.Getenv(k)
+		if v == "" { logger.Fatal("Required variable not found in environment", zap.String("required", k),zap.Error(err)) }
+		return v
+	}
+
+	// TODO Secrets Manager?
+	config.authorizationClaim = setEnv("AUTHORIZATION_CLAIM")
+	config.adminRole = setEnv("ADMIN_ROLE")
+	config.publicRole= setEnv("PUBLIC_ROLE")
 }
 
 // Initialize public key cache manager for re-use
 func initJWKS() error {
 	jwksOnce.Do(func() {
+		// TODO Secrets Manager?
 		jwks, jwksErr = keyfunc.Get(os.Getenv("JWKS_URL"), keyfunc.Options{
 			RefreshInterval: time.Hour,
 		})
@@ -103,7 +110,7 @@ func Handler(ctx context.Context, event events.APIGatewayCustomAuthorizerRequest
 
 	// Extract role from valid token
 	claims, _ := parsed.Claims.(jwt.MapClaims)
-	role, _ := claims[authorizationClaim].(string)
+	role, _ := claims[config.authorizationClaim].(string)
 
 	// Deny if role claim is missing or empty
 	if role == "" {
@@ -115,7 +122,7 @@ func Handler(ctx context.Context, event events.APIGatewayCustomAuthorizerRequest
 	}
 
 	// Deny if lacking permission for route
-	if event.HTTPMethod == "POST" && role != adminRole {
+	if event.HTTPMethod == "POST" && role != config.adminRole {
 		logger.Info("Unauthorized request for admin",
 			zap.String("role", role),
 			zap.String("method", event.HTTPMethod),
@@ -124,7 +131,7 @@ func Handler(ctx context.Context, event events.APIGatewayCustomAuthorizerRequest
 		return generatePolicy("Deny", event.MethodArn), nil
 	}
 
-	if role != adminRole && role != publicRole {
+	if role != config.adminRole && role != config.publicRole {
 		logger.Info("Unauthorized request",
 			zap.String("role", role),
 			zap.String("method", event.HTTPMethod),

@@ -62,10 +62,18 @@ func TestMain(m *testing.M) {
 
 	os.Setenv("JWKS_URL", jwksServer.URL)
 	os.Setenv("ISSUER", testIssuer)
-	os.Setenv("AUTHORIZATION_CLAIM", "xy")
-	os.Setenv("ADMIN_ROLE", "x")
-	os.Setenv("PUBLIC_ROLE", "x")
+	os.Setenv("AUTHORIZATION_CLAIM", "auth_role")
+	os.Setenv("ADMIN_ROLE", "admin")
+	os.Setenv("PUBLIC_ROLE", "public")
 
+	authorizationClaim = os.Getenv("AUTHORIZATION_CLAIM")
+	adminRole = os.Getenv("ADMIN_ROLE")
+	publicRole = os.Getenv("PUBLIC_ROLE")
+
+	config.authorizationClaim = "auth_role"
+	config.adminRole = "admin"
+	config.publicRole = "public"
+	
 	code := m.Run()
 
 	jwksServer.Close()
