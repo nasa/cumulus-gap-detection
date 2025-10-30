@@ -18,6 +18,8 @@ components:
 paths:
   /gapConfig:
     post:
+      security:
+        - JWTAuthorizer: []
       x-amazon-apigateway-integration:
         uri: "${lambda_invoke_arns.gapConfig}"
         httpMethod: "POST"
@@ -27,6 +29,8 @@ paths:
           description: "200 response"
   /getTimeGaps:
     get:
+      security:
+        - JWTAuthorizer: []
       parameters:
         - name: "short_name"
           in: "query"
@@ -116,6 +120,8 @@ paths:
           description: "200 response"
   /getGapReport:
     get:
+      security:
+        - JWTAuthorizer: []
       parameters:
         - name: "short_name"
           in: "query"
