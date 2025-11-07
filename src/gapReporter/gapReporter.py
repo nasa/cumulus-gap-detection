@@ -74,7 +74,7 @@ def lambda_handler(event, context):
                 with open(output_csv, 'w', newline='') as csvfile:
                     csvwriter = csv.writer(csvfile)
                     csvwriter.writerow(['gap_begin', 'gap_end'])
-                    csvwriter.writerows(time_gaps)
+                    csvwriter.writerows([(row[0], row[1]) for row in time_gaps])
 
                 # Upload to S3
                 s3 = boto3.client('s3')
