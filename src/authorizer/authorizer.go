@@ -14,6 +14,11 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	jwksURLFmt  = "https://%s/adfs/discovery/keys"
+	issuerFmt   = "http://%s/adfs/services/trust"
+)
+
 var (
 	jwks     *keyfunc.JWKS
 	jwksOnce sync.Once
@@ -21,9 +26,12 @@ var (
 	logger   *zap.Logger
 
 	config struct {
-		authorizationClaim string
-		adminRole          string
-		publicRole         string
+		jwksURL  string
+		issuer   string
+		audience string
+
+		adminRole  string
+		publicRole string
 	}
 )
 
@@ -48,7 +56,6 @@ func initConfig() {
 			return v
 		}
 
-		config.authorizationClaim = getEnv("AUTHORIZATION_CLAIM")
 		config.adminRole = getEnv("ADMIN_ROLE")
 		config.publicRole = getEnv("PUBLIC_ROLE")
 	})
@@ -117,7 +124,7 @@ func Handler(ctx context.Context, event events.APIGatewayCustomAuthorizerRequest
 
 	// Extract role from valid token
 	claims, _ := parsed.Claims.(jwt.MapClaims)
-	role, _ := claims[config.authorizationClaim].(string)
+	role, _ := claims["groups"].(string)
 
 	// Deny if role claim is missing or empty
 	if role == "" {

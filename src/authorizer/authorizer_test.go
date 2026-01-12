@@ -22,13 +22,13 @@ import (
 const (
 	testMethodArn = "arn:aws:execute-api:us-west-2:123456789012:abcdef/test/GET/foo"
 	testIssuer    = "https://test.issuer.example"
+	authorizationClaim = "groups"
 )
 
 var (
-	testPrivateKey *rsa.PrivateKey
-	testPublicKey  *rsa.PublicKey
-	jwksServer     *httptest.Server
-	authorizationClaim string
+	testPrivateKey     *rsa.PrivateKey
+	testPublicKey      *rsa.PublicKey
+	jwksServer         *httptest.Server
 	adminRole          string
 	publicRole         string
 )
@@ -66,14 +66,12 @@ func TestMain(m *testing.M) {
 	os.Setenv("ADMIN_ROLE", "admin")
 	os.Setenv("PUBLIC_ROLE", "public")
 
-	authorizationClaim = os.Getenv("AUTHORIZATION_CLAIM")
 	adminRole = os.Getenv("ADMIN_ROLE")
 	publicRole = os.Getenv("PUBLIC_ROLE")
 
-	config.authorizationClaim = "auth_role"
 	config.adminRole = "admin"
 	config.publicRole = "public"
-	
+
 	code := m.Run()
 
 	jwksServer.Close()
