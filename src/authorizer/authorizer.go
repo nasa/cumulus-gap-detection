@@ -27,30 +27,36 @@ var (
 	}
 )
 
-
 func init() {
 	var err error
-	//logger, err = zap.NewProduction()
 	logger, err = zap.NewDevelopment()
 	if err != nil {
 		panic(err)
 	}
-	setEnv := func(k string) string {
-		v := os.Getenv(k)
-		if v == "" { logger.Fatal("Required variable not found in environment", zap.String("required", k),zap.Error(err)) }
-		return v
-	}
+}
 
-	// TODO Secrets Manager?
-	config.authorizationClaim = setEnv("AUTHORIZATION_CLAIM")
-	config.adminRole = setEnv("ADMIN_ROLE")
-	config.publicRole= setEnv("PUBLIC_ROLE")
+var configOnce sync.Once
+
+func initConfig() {
+	configOnce.Do(func() {
+		getEnv := func(k string) string {
+			v := os.Getenv(k)
+			if v == "" {
+				logger.Fatal("Required variable not found in environment",
+					zap.String("required", k))
+			}
+			return v
+		}
+
+		config.authorizationClaim = getEnv("AUTHORIZATION_CLAIM")
+		config.adminRole = getEnv("ADMIN_ROLE")
+		config.publicRole = getEnv("PUBLIC_ROLE")
+	})
 }
 
 // Initialize public key cache manager for re-use
 func initJWKS() error {
 	jwksOnce.Do(func() {
-		// TODO Secrets Manager?
 		jwks, jwksErr = keyfunc.Get(os.Getenv("JWKS_URL"), keyfunc.Options{
 			RefreshInterval: time.Hour,
 		})
@@ -77,6 +83,7 @@ func generatePolicy(effect, resource string) events.APIGatewayCustomAuthorizerRe
 }
 
 func Handler(ctx context.Context, event events.APIGatewayCustomAuthorizerRequestTypeRequest) (events.APIGatewayCustomAuthorizerResponse, error) {
+	initConfig()
 	// Initialize JWKS Client once, caches public key in lambda runtime
 	if err := initJWKS(); err != nil {
 		logger.Error("JWKS initialization failed",
