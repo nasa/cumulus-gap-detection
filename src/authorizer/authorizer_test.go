@@ -20,17 +20,17 @@ import (
 )
 
 const (
-	testMethodArn = "arn:aws:execute-api:us-west-2:123456789012:abcdef/test/GET/foo"
-	testIssuer    = "https://test.issuer.example"
+	testMethodArn      = "arn:aws:execute-api:us-west-2:123456789012:abcdef/test/GET/foo"
+	testIssuer         = "https://test.issuer.example"
 	authorizationClaim = "groups"
 )
 
 var (
-	testPrivateKey     *rsa.PrivateKey
-	testPublicKey      *rsa.PublicKey
-	jwksServer         *httptest.Server
-	adminRole          string
-	publicRole         string
+	testPrivateKey *rsa.PrivateKey
+	testPublicKey  *rsa.PublicKey
+	jwksServer     *httptest.Server
+	adminRole      string
+	publicRole     string
 )
 
 func TestMain(m *testing.M) {
@@ -65,6 +65,8 @@ func TestMain(m *testing.M) {
 	os.Setenv("AUTHORIZATION_CLAIM", "auth_role")
 	os.Setenv("ADMIN_ROLE", "admin")
 	os.Setenv("PUBLIC_ROLE", "public")
+	os.Setenv("IDP_HOST", "example.idp.org")
+	os.Setenv("AUDIENCE", "example-aud-1234")
 
 	adminRole = os.Getenv("ADMIN_ROLE")
 	publicRole = os.Getenv("PUBLIC_ROLE")

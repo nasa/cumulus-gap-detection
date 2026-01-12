@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -15,8 +16,8 @@ import (
 )
 
 const (
-	jwksURLFmt  = "https://%s/adfs/discovery/keys"
-	issuerFmt   = "http://%s/adfs/services/trust"
+	jwksURLFmt = "https://%s/discovery/keys"
+	issuerFmt  = "http://%s/services/trust"
 )
 
 var (
@@ -26,10 +27,9 @@ var (
 	logger   *zap.Logger
 
 	config struct {
-		jwksURL  string
-		issuer   string
-		audience string
-
+		jwksURL    string
+		issuer     string
+		audience   string
 		adminRole  string
 		publicRole string
 	}
@@ -55,7 +55,10 @@ func initConfig() {
 			}
 			return v
 		}
-
+		idpHost := getEnv("IDP_HOST")
+		config.jwksURL = fmt.Sprintf(jwksURLFmt, idpHost)
+		config.issuer = fmt.Sprintf(issuerFmt, idpHost)
+		config.audience = getEnv("AUDIENCE")
 		config.adminRole = getEnv("ADMIN_ROLE")
 		config.publicRole = getEnv("PUBLIC_ROLE")
 	})
