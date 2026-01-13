@@ -68,7 +68,7 @@ func initConfig() {
 // Initialize public key cache manager for re-use
 func initJWKS() error {
 	jwksOnce.Do(func() {
-		jwks, jwksErr = keyfunc.Get(os.Getenv("JWKS_URL"), keyfunc.Options{
+		jwks, jwksErr = keyfunc.Get(config.jwksURL, keyfunc.Options{
 			RefreshInterval: time.Hour,
 		})
 	})
@@ -99,7 +99,7 @@ func Handler(ctx context.Context, event events.APIGatewayCustomAuthorizerRequest
 	if err := initJWKS(); err != nil {
 		logger.Error("JWKS initialization failed",
 			zap.Error(err),
-			zap.String("jwks_url", os.Getenv("JWKS_URL")),
+			zap.String("jwks_url", config.jwksURL),
 		)
 		return generatePolicy("Deny", event.MethodArn), err
 	}
@@ -110,7 +110,8 @@ func Handler(ctx context.Context, event events.APIGatewayCustomAuthorizerRequest
 		strings.TrimPrefix(event.Headers["Authorization"], "Bearer "),
 		jwks.Keyfunc,
 		jwt.WithValidMethods([]string{"RS256"}),
-		jwt.WithIssuer(os.Getenv("ISSUER")),
+		jwt.WithIssuer(config.issuer),
+		jwt.WithAudience(config.audience),
 	)
 	logger.Debug("Token parsed",
 		zap.Any("token", parsed),
