@@ -186,16 +186,15 @@ resource "aws_lambda_function" "authorizer" {
   runtime          = "provided.al2023"
   handler          = "bootstrap"
   architectures    = ["arm64"]
-  timeout          = 5
+  timeout          = 60
   #memory_size      = 256
   
   environment {
     variables = {
-      JWKS_URL            = var.jwks_url
-      ISSUER              = var.issuer
-      AUTHORIZATION_CLAIM = var.authorization_claim
-      ADMIN_ROLE         = var.admin_role
-      PUBLIC_ROLE        = var.public_role
+      IDP_HOST    = var.idp_host
+      AUDIENCE    = var.audience
+      ADMIN_ROLE  = var.admin_role
+      PUBLIC_ROLE = var.public_role
     }
   }
 }

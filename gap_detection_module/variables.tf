@@ -94,27 +94,22 @@ variable "state_machine_name_lst" {
   type        = list(string)
 }
 
-variable "jwks_url" {
+variable "idp_host" {
   type        = string
-  description = "JWKS endpoint for token verification"
+  description = "Hostname + base path of identity provider"
 }
 
-variable "issuer" {
+variable "audience" {
   type        = string
-  description = "Expected JWT issuer claim value"
-}
-
-variable "authorization_claim" {
-  type        = string
-  description = "Authorization claim name"
+  description = "Expected audience of the access token"
 }
 
 variable "admin_role" {
   type        = string
-  description = "Auth claim value for admin access"
+  description = "Name of admin group"
 }
 
 variable "public_role" {
   type        = string
-  description = "Auth claim value for public access"
+  description = "Name of public group"
 }
