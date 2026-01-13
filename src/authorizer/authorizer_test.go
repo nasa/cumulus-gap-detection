@@ -6,8 +6,8 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"math/big"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"reflect"
@@ -15,14 +15,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MicahParks/keyfunc/v2"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/golang-jwt/jwt/v5"
 )
 
 const (
 	testMethodArn      = "arn:aws:execute-api:us-west-2:123456789012:abcdef/test/GET/foo"
-	testIssuer         = "https://test.issuer.example"
 	authorizationClaim = "groups"
+	testAudience       = "example-aud-1234"
 )
 
 var (
@@ -31,6 +32,7 @@ var (
 	jwksServer     *httptest.Server
 	adminRole      string
 	publicRole     string
+	testIssuer     string
 )
 
 func TestMain(m *testing.M) {
@@ -40,49 +42,47 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	testPublicKey = &testPrivateKey.PublicKey
-
-	jwksServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		nBytes := testPublicKey.N.Bytes()
-		eBytes := big.NewInt(int64(testPublicKey.E)).Bytes()
-
-		jwks := map[string]interface{}{
-			"keys": []map[string]string{
-				{
-					"kty": "RSA",
-					"alg": "RS256",
-					"kid": "test-key",
-					"use": "sig",
-					"n":   base64.RawURLEncoding.EncodeToString(nBytes),
-					"e":   base64.RawURLEncoding.EncodeToString(eBytes),
-				},
-			},
-		}
-		json.NewEncoder(w).Encode(jwks)
-	}))
-
-	os.Setenv("JWKS_URL", jwksServer.URL)
-	os.Setenv("ISSUER", testIssuer)
-	os.Setenv("AUTHORIZATION_CLAIM", "auth_role")
+	jwks, err = keyfunc.NewJSON(json.RawMessage(fmt.Sprintf(`{
+		"keys": [{
+			"kty": "RSA",
+			"alg": "RS256", 
+			"kid": "test-key",
+			"use": "sig",
+			"n": "%s",
+			"e": "%s"
+		}]
+	}`,
+		base64.RawURLEncoding.EncodeToString(testPublicKey.N.Bytes()),
+		base64.RawURLEncoding.EncodeToString(big.NewInt(int64(testPublicKey.E)).Bytes()),
+	)))
+	if err != nil {
+		panic(err)
+	}
+	jwksErr = nil
+	jwksOnce.Do(func() {})
+	testHost := "example.idp.org"
+	os.Setenv("IDP_HOST", testHost)
+	os.Setenv("AUDIENCE", testAudience)
 	os.Setenv("ADMIN_ROLE", "admin")
 	os.Setenv("PUBLIC_ROLE", "public")
-	os.Setenv("IDP_HOST", "example.idp.org")
-	os.Setenv("AUDIENCE", "example-aud-1234")
 
 	adminRole = os.Getenv("ADMIN_ROLE")
 	publicRole = os.Getenv("PUBLIC_ROLE")
 
 	config.adminRole = "admin"
 	config.publicRole = "public"
+	testIssuer = fmt.Sprintf(issuerFmt, testHost)
 
 	code := m.Run()
-
-	jwksServer.Close()
 	os.Exit(code)
 }
 
 func createToken(claims jwt.MapClaims) string {
 	if claims["iss"] == nil {
 		claims["iss"] = testIssuer
+	}
+	if claims["aud"] == nil {
+		claims["aud"] = testAudience
 	}
 	if claims["exp"] == nil {
 		claims["exp"] = time.Now().Add(time.Hour).Unix()
@@ -150,16 +150,35 @@ func TestGeneratePolicy(t *testing.T) {
 }
 
 func TestHandler_InitJWKSFailure(t *testing.T) {
-	originalURL := os.Getenv("JWKS_URL")
-	os.Setenv("JWKS_URL", "bad url")
+	originalHost := os.Getenv("IDP_HOST")
+	os.Setenv("IDP_HOST", "bad host")
 
 	jwks = nil
 	jwksOnce = sync.Once{}
+	configOnce = sync.Once{}
 
 	defer func() {
-		os.Setenv("JWKS_URL", originalURL)
-		jwks = nil
-		jwksOnce = sync.Once{}
+		os.Setenv("IDP_HOST", originalHost)
+		configOnce = sync.Once{}
+		var err error
+		jwks, err = keyfunc.NewJSON(json.RawMessage(fmt.Sprintf(`{
+			"keys": [{
+				"kty": "RSA",
+				"alg": "RS256", 
+				"kid": "test-key",
+				"use": "sig",
+				"n": "%s",
+				"e": "%s"
+			}]
+		}`,
+			base64.RawURLEncoding.EncodeToString(testPublicKey.N.Bytes()),
+			base64.RawURLEncoding.EncodeToString(big.NewInt(int64(testPublicKey.E)).Bytes()),
+		)))
+		if err != nil {
+			panic(err)
+		}
+		jwksErr = nil
+		jwksOnce.Do(func() {})
 	}()
 
 	resp, err := Handler(context.Background(), events.APIGatewayCustomAuthorizerRequestTypeRequest{
