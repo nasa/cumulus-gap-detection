@@ -27,11 +27,12 @@ var (
 	logger   *zap.Logger
 
 	config struct {
-		jwksURL    string
-		issuer     string
-		audience   string
-		adminRole  string
-		publicRole string
+		jwksURL         string
+		issuer          string
+		audience        string
+		adminRole       string
+		publicRole      string
+		authorizedHosts []string
 	}
 )
 
@@ -57,11 +58,21 @@ func initConfig() {
 		}
 		// Set backend config from environment variables
 		idpHost := getEnv("IDP_HOST")
+		authorizedHosts := getEnv("AUTHORIZED_HOSTS")
 		config.audience = getEnv("AUDIENCE")
 		config.adminRole = getEnv("ADMIN_ROLE")
 		config.publicRole = getEnv("PUBLIC_ROLE")
 		config.jwksURL = fmt.Sprintf(jwksURLFmt, idpHost)
 		config.issuer = fmt.Sprintf(issuerFmt, idpHost)
+
+		// Parse IP addresses from whitelist env var
+		if authorizedHosts != "" {
+			config.authorizedHosts = strings.Split(authorizedHosts, ",")
+			for i := range config.authorizedHosts {
+				config.authorizedHosts[i] = strings.TrimSpace(config.authorizedHosts[i])
+			}
+		}
+		logger.Debug("Authorized read-only hosts", zap.Strings("ips", config.authorizedHosts))
 	})
 }
 
@@ -69,8 +80,6 @@ func initConfig() {
 func initJWKS() error {
 	jwksOnce.Do(func() {
 		url := config.jwksURL
-		logger.Debug("JWKS fetch starting", zap.String("url", url))
-
 		start := time.Now()
 		jwks, jwksErr = keyfunc.Get(url, keyfunc.Options{
 			RefreshInterval: time.Hour,
@@ -102,6 +111,14 @@ func generatePolicy(effect, resource string) events.APIGatewayCustomAuthorizerRe
 
 func Handler(ctx context.Context, event events.APIGatewayCustomAuthorizerRequestTypeRequest) (events.APIGatewayCustomAuthorizerResponse, error) {
 	initConfig()
+	sourceIP := event.RequestContext.Identity.SourceIP
+	//authHeader := event.Headers["Authorization"]
+	logger.Debug("Got request: ",
+		zap.String("source_ip", sourceIP),
+		zap.String("method", event.HTTPMethod),
+		zap.String("path", event.Path),
+	)
+
 	// Initialize JWKS Client once, caches public key in lambda runtime
 	if err := initJWKS(); err != nil {
 		logger.Error("JWKS initialization failed",

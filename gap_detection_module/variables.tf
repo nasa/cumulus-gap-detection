@@ -113,3 +113,8 @@ variable "public_role" {
   type        = string
   description = "Name of public group"
 }
+
+variable "authorized_hosts" {
+  type        = list(string)
+  description = "List of IP addresses of hosts that have read-only authorization without authentication"
+}

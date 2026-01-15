@@ -194,6 +194,7 @@ resource "aws_lambda_function" "authorizer" {
       AUDIENCE    = var.audience
       ADMIN_ROLE  = var.admin_role
       PUBLIC_ROLE = var.public_role
+      AUTHORIZED_HOSTS = join(",", var.authorized_hosts)
     }
   }
 }

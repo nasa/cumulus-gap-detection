@@ -65,6 +65,7 @@ func TestMain(m *testing.M) {
 	os.Setenv("AUDIENCE", testAudience)
 	os.Setenv("ADMIN_ROLE", "admin")
 	os.Setenv("PUBLIC_ROLE", "public")
+	os.Setenv("AUTHORIZED_HOSTS", "999.999.999.999")
 
 	adminRole = os.Getenv("ADMIN_ROLE")
 	publicRole = os.Getenv("PUBLIC_ROLE")
