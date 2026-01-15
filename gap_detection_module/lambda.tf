@@ -186,8 +186,7 @@ resource "aws_lambda_function" "authorizer" {
   runtime          = "provided.al2023"
   handler          = "bootstrap"
   architectures    = ["arm64"]
-  timeout          = 60
-  #memory_size      = 256
+  timeout          = 30
   
   environment {
     variables = {
