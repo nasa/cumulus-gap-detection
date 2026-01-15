@@ -68,9 +68,16 @@ func initConfig() {
 // Initialize public key cache manager for re-use
 func initJWKS() error {
 	jwksOnce.Do(func() {
-		jwks, jwksErr = keyfunc.Get(config.jwksURL, keyfunc.Options{
+		url := config.jwksURL
+		logger.Debug("JWKS fetch starting", zap.String("url", url))
+
+		start := time.Now()
+		jwks, jwksErr = keyfunc.Get(url, keyfunc.Options{
 			RefreshInterval: time.Hour,
 		})
+		logger.Debug("JWKS fetch completed",
+			zap.Duration("elapsed", time.Since(start)),
+			zap.Error(jwksErr))
 	})
 	return jwksErr
 }
@@ -164,7 +171,12 @@ func Handler(ctx context.Context, event events.APIGatewayCustomAuthorizerRequest
 		)
 		return generatePolicy("Deny", event.MethodArn), nil
 	}
-
+	logger.Info("Authorizing Request",
+		zap.String("user", userID),
+		zap.String("role", role),
+		zap.String("method", event.HTTPMethod),
+		zap.String("path", event.Path),
+	)
 	return generatePolicy("Allow", event.MethodArn), nil
 }
 
