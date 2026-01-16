@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -117,53 +118,63 @@ func generatePolicy(effect, message, userID, role string, event events.APIGatewa
 	}
 }
 
+func parseToken(authHeader string) (role, userID string) {
+	// Extract bearer token
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	if token == "" || token == authHeader {
+		logger.Info("Malformed Authorization header")
+		return "", ""
+	}
+
+	// Initialize JWKS
+	if err := initJWKS(); err != nil {
+		logger.Error("JWKS initialization failed",
+			zap.Error(err),
+			zap.String("jwks_url", config.jwksURL),
+		)
+		return "", ""
+	}
+
+	// Validate token: signature, algorithm, issuer, audience
+	parsed, err := jwt.Parse(
+		token,
+		jwks.Keyfunc,
+		jwt.WithValidMethods([]string{"RS256"}),
+		jwt.WithIssuer(config.issuer),
+		jwt.WithAudience(config.audience),
+	)
+
+	if err != nil || !parsed.Valid {
+		logger.Info("Invalid token", zap.Error(err))
+		return "", ""
+	}
+
+	claims, _ := parsed.Claims.(jwt.MapClaims)
+	role, _ = claims["groups"].(string)
+	userID, _ = claims["AgencyUID"].(string)
+	return role, userID
+}
+
 func Handler(ctx context.Context, event events.APIGatewayCustomAuthorizerRequestTypeRequest) (events.APIGatewayCustomAuthorizerResponse, error) {
 	initConfig()
+	var role, userID string
 	sourceIP := event.RequestContext.Identity.SourceIP
-	//authHeader := event.Headers["Authorization"]
+	authHeader := event.Headers["Authorization"]
+
 	logger.Debug("Got request: ",
 		zap.String("source_ip", sourceIP),
 		zap.String("method", event.HTTPMethod),
 		zap.String("path", event.Path),
 	)
 
-	// Initialize JWKS Client once, caches public key in lambda runtime
-	if err := initJWKS(); err != nil {
-		logger.Error("JWKS initialization failed",
-			zap.Error(err),
-			zap.String("jwks_url", config.jwksURL),
-		)
-		return generatePolicy("Deny", "JWKS unavailable", "", "", event), err
+	// Assign role from token if auth header is set
+	if authHeader != "" {
+		role, userID = parseToken(authHeader)
+		// Assign public role if source IP is whitelisted
+	} else if slices.Contains(config.authorizedHosts, sourceIP) {
+		role = config.publicRole
+		userID = sourceIP
 	}
-
-	// Parse and validate using IdP public key
-	//TODO Split out request header parsing to better delinate parsing failure from invalid token
-	parsed, err := jwt.Parse(
-		strings.TrimPrefix(event.Headers["Authorization"], "Bearer "),
-		jwks.Keyfunc,
-		jwt.WithValidMethods([]string{"RS256"}),
-		jwt.WithIssuer(config.issuer),
-		jwt.WithAudience(config.audience),
-	)
-	logger.Debug("Token parsed",
-		zap.Any("token", parsed),
-		zap.Error(err),
-	)
-
-	// Deny if parsing failure or invalid attributes
-	if err != nil || !parsed.Valid {
-		logger.Info("Token validation failed",
-			zap.String("method", event.HTTPMethod),
-			zap.String("path", event.Path),
-			zap.Error(err),
-		)
-		return generatePolicy("Deny", "Token parsing failed", "", "", event), nil
-	}
-
-	// Extract role from valid token
-	claims, _ := parsed.Claims.(jwt.MapClaims)
-	role, _ := claims["groups"].(string)
-	userID, _ := claims["AgencyUID"].(string)
 
 	// Allow all admin requests
 	if role == config.adminRole {
