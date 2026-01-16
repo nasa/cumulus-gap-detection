@@ -5,7 +5,7 @@ info:
   version: "1.0.0"
 components:
   securitySchemes:
-    JWTAuthorizer:
+    AdminAuthorizer:
       type: apiKey
       name: Authorization
       in: header
@@ -13,13 +13,24 @@ components:
       x-amazon-apigateway-authorizer:
         type: request
         authorizerUri: "arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${authorizer_arn}/invocations"
-        authorizerResultTtlInSeconds: 300
-        identitySource: method.request.header.Authorization
+        authorizerResultTtlInSeconds: 3600
+        identitySource: "method.request.header.Authorization"
+    
+    PublicAuthorizer:
+      type: apiKey
+      name: Authorization
+      in: header
+      x-amazon-apigateway-authtype: custom
+      x-amazon-apigateway-authorizer:
+        type: request
+        authorizerUri: "arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${authorizer_arn}/invocations"
+        authorizerResultTtlInSeconds: 3600
+        identitySource: "context.identity.sourceIp"
 paths:
   /gapConfig:
     post:
       security:
-        - JWTAuthorizer: []
+        - AdminAuthorizer: []
       x-amazon-apigateway-integration:
         uri: "${lambda_invoke_arns.gapConfig}"
         httpMethod: "POST"
@@ -30,7 +41,7 @@ paths:
   /getTimeGaps:
     get:
       security:
-        - JWTAuthorizer: []
+        - PublicAuthorizer: []
       parameters:
         - name: "short_name"
           in: "query"
@@ -79,7 +90,7 @@ paths:
   /knownGap:
     get:
       security:
-        - JWTAuthorizer: []
+        - PublicAuthorizer: []
       parameters:
         - name: "short_name"
           in: "query"
@@ -110,7 +121,7 @@ paths:
           description: "200 response"
     post:
       security:
-        - JWTAuthorizer: []
+        - AdminAuthorizer: []
       x-amazon-apigateway-integration:
         uri: "${lambda_invoke_arns.knownGap}"
         httpMethod: "POST"
@@ -121,7 +132,7 @@ paths:
   /getGapReport:
     get:
       security:
-        - JWTAuthorizer: []
+        - PublicAuthorizer: []
       parameters:
         - name: "short_name"
           in: "query"
