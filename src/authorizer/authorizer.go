@@ -157,44 +157,36 @@ func Handler(ctx context.Context, event events.APIGatewayCustomAuthorizerRequest
 	role, _ := claims["groups"].(string)
 	userID, _ := claims["AgencyUID"].(string)
 
-	// Deny if role claim is missing or empty
-	if role == "" {
-		logger.Info("Missing or empty role claim",
-			zap.String("user", userID),
-			zap.String("method", event.HTTPMethod),
-			zap.String("path", event.Path),
-		)
-		return generatePolicy("Deny", event.MethodArn), nil
-	}
-
-	// TODO Validate authroization logic, seems frail
-	// Deny if lacking permission for route
-	if event.HTTPMethod == "POST" && role != config.adminRole {
-		logger.Info("Unauthorized request for admin",
+	// Allow all admin requests
+	if role == config.adminRole {
+		logger.Info("Authorized request for admin",
 			zap.String("user", userID),
 			zap.String("role", role),
 			zap.String("method", event.HTTPMethod),
 			zap.String("path", event.Path),
 		)
-		return generatePolicy("Deny", event.MethodArn), nil
+		return generatePolicy("Allow", event.MethodArn), nil
 	}
 
-	if role != config.adminRole && role != config.publicRole {
-		logger.Info("Unauthorized request",
+	// Allow public requests for GET
+	if event.HTTPMethod == "GET" && role == config.publicRole {
+		logger.Info("Authorized request for public",
 			zap.String("user", userID),
 			zap.String("role", role),
 			zap.String("method", event.HTTPMethod),
 			zap.String("path", event.Path),
 		)
-		return generatePolicy("Deny", event.MethodArn), nil
+		return generatePolicy("Allow", event.MethodArn), nil
 	}
-	logger.Info("Authorizing Request",
+
+	// Default deny catch-all
+	logger.Info("Unauthorized request",
 		zap.String("user", userID),
 		zap.String("role", role),
 		zap.String("method", event.HTTPMethod),
 		zap.String("path", event.Path),
 	)
-	return generatePolicy("Allow", event.MethodArn), nil
+	return generatePolicy("Deny", event.MethodArn), nil
 }
 
 func main() {
