@@ -52,7 +52,7 @@ func initConfig() {
 		getEnv := func(k string) string {
 			v := os.Getenv(k)
 			if v == "" {
-				logger.Fatal("Required variable not found in environment",
+				logger.Fatal("INIT: Required variable not found in environment",
 					zap.String("required", k))
 			}
 			return v
@@ -73,7 +73,7 @@ func initConfig() {
 				config.authorizedHosts[i] = strings.TrimSpace(config.authorizedHosts[i])
 			}
 		}
-		logger.Debug("Authorized read-only hosts", zap.Strings("ips", config.authorizedHosts))
+		logger.Debug("INIT: Authorized read-only hosts", zap.Strings("ips", config.authorizedHosts))
 	})
 }
 
@@ -85,7 +85,7 @@ func initJWKS() error {
 		jwks, jwksErr = keyfunc.Get(url, keyfunc.Options{
 			RefreshInterval: time.Hour,
 		})
-		logger.Debug("JWKS fetch completed",
+		logger.Debug("INIT: JWKS fetch completed",
 			zap.Duration("elapsed", time.Since(start)),
 			zap.Error(jwksErr))
 	})
@@ -122,7 +122,7 @@ func parseToken(authHeader string) (role, userID string) {
 	// Extract bearer token
 	token := strings.TrimPrefix(authHeader, "Bearer ")
 	if token == "" || token == authHeader {
-		logger.Info("Malformed Authorization header")
+		logger.Debug("Malformed Authorization header")
 		return "", ""
 	}
 
@@ -161,10 +161,16 @@ func Handler(ctx context.Context, event events.APIGatewayCustomAuthorizerRequest
 	sourceIP := event.RequestContext.Identity.SourceIP
 	authHeader := event.Headers["Authorization"]
 
-	logger.Debug("Got request: ",
+	logger.Info("Recieved request",
 		zap.String("source_ip", sourceIP),
 		zap.String("method", event.HTTPMethod),
 		zap.String("path", event.Path),
+		zap.String("auth_source", func() string {
+			if authHeader != "" {
+				return "auth header"
+			}
+			return "ip address"
+		}()),
 	)
 
 	// Assign role from token if auth header is set
