@@ -101,15 +101,30 @@ func createToken(claims jwt.MapClaims) string {
 
 func TestGeneratePolicy(t *testing.T) {
 	tests := []struct {
-		name     string
-		effect   string
-		resource string
-		want     events.APIGatewayCustomAuthorizerResponse
+		name    string
+		effect  string
+		message string
+		userID  string
+		role    string
+		event   events.APIGatewayCustomAuthorizerRequestTypeRequest
+		want    events.APIGatewayCustomAuthorizerResponse
 	}{
 		{
-			name:     "allow",
-			effect:   "Allow",
-			resource: testMethodArn,
+			name:    "allow",
+			effect:  "Allow",
+			message: "test allow",
+			userID:  "testuser",
+			role:    "admin",
+			event: events.APIGatewayCustomAuthorizerRequestTypeRequest{
+				MethodArn:  testMethodArn,
+				HTTPMethod: "GET",
+				Path:       "/test",
+				RequestContext: events.APIGatewayCustomAuthorizerRequestTypeRequestContext{
+					Identity: events.APIGatewayCustomAuthorizerRequestTypeRequestIdentity{
+						SourceIP: "0.0.0.0",
+					},
+				},
+			},
 			want: events.APIGatewayCustomAuthorizerResponse{
 				PrincipalID: "user",
 				PolicyDocument: events.APIGatewayCustomAuthorizerPolicy{
@@ -123,9 +138,21 @@ func TestGeneratePolicy(t *testing.T) {
 			},
 		},
 		{
-			name:     "deny",
-			effect:   "Deny",
-			resource: testMethodArn,
+			name:    "deny",
+			effect:  "Deny",
+			message: "test deny",
+			userID:  "testuser",
+			role:    "public",
+			event: events.APIGatewayCustomAuthorizerRequestTypeRequest{
+				MethodArn:  testMethodArn,
+				HTTPMethod: "POST",
+				Path:       "/test",
+				RequestContext: events.APIGatewayCustomAuthorizerRequestTypeRequestContext{
+					Identity: events.APIGatewayCustomAuthorizerRequestTypeRequestIdentity{
+						SourceIP: "0.0.0.0",
+					},
+				},
+			},
 			want: events.APIGatewayCustomAuthorizerResponse{
 				PrincipalID: "user",
 				PolicyDocument: events.APIGatewayCustomAuthorizerPolicy{
@@ -139,10 +166,9 @@ func TestGeneratePolicy(t *testing.T) {
 			},
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := generatePolicy(tt.effect, tt.resource)
+			got := generatePolicy(tt.effect, tt.message, tt.userID, tt.role, tt.event)
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("mismatch:\ngot:  %+v\nwant: %+v", got, tt.want)
 			}

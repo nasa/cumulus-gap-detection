@@ -92,9 +92,17 @@ func initJWKS() error {
 }
 
 // Generate resource policy for a given resource and effect (ie. Allow or Deny)
-func generatePolicy(effect, resource string) events.APIGatewayCustomAuthorizerResponse {
+func generatePolicy(effect, message, userID, role string, event events.APIGatewayCustomAuthorizerRequestTypeRequest) events.APIGatewayCustomAuthorizerResponse {
+	logger.Info(message,
+		zap.String("effect", effect),
+		zap.String("user", userID),
+		zap.String("role", role),
+		zap.String("source_ip", event.RequestContext.Identity.SourceIP),
+		zap.String("method", event.HTTPMethod),
+		zap.String("path", event.Path),
+	)
 	if effect == "Deny" {
-		resource = "*"
+		event.MethodArn = "*"
 	}
 	return events.APIGatewayCustomAuthorizerResponse{
 		PrincipalID: "user",
@@ -103,7 +111,7 @@ func generatePolicy(effect, resource string) events.APIGatewayCustomAuthorizerRe
 			Statement: []events.IAMPolicyStatement{{
 				Action:   []string{"execute-api:Invoke"},
 				Effect:   effect,
-				Resource: []string{resource},
+				Resource: []string{event.MethodArn},
 			}},
 		},
 	}
@@ -125,7 +133,7 @@ func Handler(ctx context.Context, event events.APIGatewayCustomAuthorizerRequest
 			zap.Error(err),
 			zap.String("jwks_url", config.jwksURL),
 		)
-		return generatePolicy("Deny", event.MethodArn), err
+		return generatePolicy("Deny", "JWKS unavailable", "", "", event), err
 	}
 
 	// Parse and validate using IdP public key
@@ -149,7 +157,7 @@ func Handler(ctx context.Context, event events.APIGatewayCustomAuthorizerRequest
 			zap.String("path", event.Path),
 			zap.Error(err),
 		)
-		return generatePolicy("Deny", event.MethodArn), nil
+		return generatePolicy("Deny", "Token parsing failed", "", "", event), nil
 	}
 
 	// Extract role from valid token
@@ -159,34 +167,16 @@ func Handler(ctx context.Context, event events.APIGatewayCustomAuthorizerRequest
 
 	// Allow all admin requests
 	if role == config.adminRole {
-		logger.Info("Authorized request for admin",
-			zap.String("user", userID),
-			zap.String("role", role),
-			zap.String("method", event.HTTPMethod),
-			zap.String("path", event.Path),
-		)
-		return generatePolicy("Allow", event.MethodArn), nil
+		return generatePolicy("Allow", "Authorizing admin request", userID, role, event), nil
 	}
 
 	// Allow public requests for GET
 	if event.HTTPMethod == "GET" && role == config.publicRole {
-		logger.Info("Authorized request for public",
-			zap.String("user", userID),
-			zap.String("role", role),
-			zap.String("method", event.HTTPMethod),
-			zap.String("path", event.Path),
-		)
-		return generatePolicy("Allow", event.MethodArn), nil
+		return generatePolicy("Allow", "Authorizing public request", userID, role, event), nil
 	}
 
 	// Default deny catch-all
-	logger.Info("Unauthorized request",
-		zap.String("user", userID),
-		zap.String("role", role),
-		zap.String("method", event.HTTPMethod),
-		zap.String("path", event.Path),
-	)
-	return generatePolicy("Deny", event.MethodArn), nil
+	return generatePolicy("Deny", "Unauthorized request", userID, role, event), nil
 }
 
 func main() {
