@@ -59,7 +59,7 @@ func initConfig() {
 		}
 		// Set backend config from environment variables
 		idpHost := getEnv("IDP_HOST")
-		authorizedHosts := getEnv("AUTHORIZED_HOSTS")
+		authorizedHosts := os.Getenv("AUTHORIZED_HOSTS")
 		config.audience = getEnv("AUDIENCE")
 		config.adminRole = getEnv("ADMIN_ROLE")
 		config.publicRole = getEnv("PUBLIC_ROLE")
