@@ -1,8 +1,9 @@
 openapi: 3.0.1
 info:
-  title: "${DEPLOY_NAME}-TemporalGapAPI"
+  title: "$${DEPLOY_NAME}-TemporalGapAPI"
   description: "Temporal Gap API"
   version: "1.0.0"
+%{ if enable_authorizer ~}
 components:
   securitySchemes:
     AdminAuthorizer:
@@ -12,7 +13,7 @@ components:
       x-amazon-apigateway-authtype: custom
       x-amazon-apigateway-authorizer:
         type: request
-        authorizerUri: "arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${authorizer_arn}/invocations"
+        authorizerUri: "arn:aws:apigateway:$${region}:lambda:path/2015-03-31/functions/$${authorizer_arn}/invocations"
         authorizerResultTtlInSeconds: 3600
         identitySource: "method.request.header.Authorization"
     
@@ -23,16 +24,19 @@ components:
       x-amazon-apigateway-authtype: custom
       x-amazon-apigateway-authorizer:
         type: request
-        authorizerUri: "arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${authorizer_arn}/invocations"
+        authorizerUri: "arn:aws:apigateway:$${region}:lambda:path/2015-03-31/functions/$${authorizer_arn}/invocations"
         authorizerResultTtlInSeconds: 3600
         identitySource: "context.identity.sourceIp"
+%{ endif ~}
 paths:
   /gapConfig:
     post:
+%{ if enable_authorizer ~}
       security:
         - AdminAuthorizer: []
+%{ endif ~}
       x-amazon-apigateway-integration:
-        uri: "${lambda_invoke_arns.gapConfig}"
+        uri: "$${lambda_invoke_arns.gapConfig}"
         httpMethod: "POST"
         type: "AWS_PROXY"
       responses:
@@ -40,8 +44,10 @@ paths:
           description: "200 response"
   /getTimeGaps:
     get:
+%{ if enable_authorizer ~}
       security:
         - PublicAuthorizer: []
+%{ endif ~}
       parameters:
         - name: "short_name"
           in: "query"
@@ -74,7 +80,7 @@ paths:
           schema:
             type: "string"
       x-amazon-apigateway-integration:
-        uri: "${lambda_invoke_arns.getTimeGaps}"
+        uri: "$${lambda_invoke_arns.getTimeGaps}"
         httpMethod: "POST"
         type: "AWS_PROXY"
         requestParameters:
@@ -89,8 +95,10 @@ paths:
           description: "200 response"
   /knownGap:
     get:
+%{ if enable_authorizer ~}
       security:
         - PublicAuthorizer: []
+%{ endif ~}
       parameters:
         - name: "short_name"
           in: "query"
@@ -113,17 +121,19 @@ paths:
           schema:
             type: "string"
       x-amazon-apigateway-integration:
-        uri: "${lambda_invoke_arns.knownGap}"
+        uri: "$${lambda_invoke_arns.knownGap}"
         httpMethod: "POST"
         type: "AWS_PROXY"
       responses:
         "200":
           description: "200 response"
     post:
+%{ if enable_authorizer ~}
       security:
         - AdminAuthorizer: []
+%{ endif ~}
       x-amazon-apigateway-integration:
-        uri: "${lambda_invoke_arns.knownGap}"
+        uri: "$${lambda_invoke_arns.knownGap}"
         httpMethod: "POST"
         type: "AWS_PROXY"
       responses:
@@ -131,8 +141,10 @@ paths:
           description: "200 response"
   /getGapReport:
     get:
+%{ if enable_authorizer ~}
       security:
         - PublicAuthorizer: []
+%{ endif ~}
       parameters:
         - name: "short_name"
           in: "query"
@@ -145,7 +157,7 @@ paths:
           schema:
             type: "string"
       x-amazon-apigateway-integration:
-        uri: "${lambda_invoke_arns.getGapReport}"
+        uri: "$${lambda_invoke_arns.getGapReport}"
         httpMethod: "POST"
         type: "AWS_PROXY"
       responses:

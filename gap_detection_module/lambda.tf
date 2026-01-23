@@ -179,6 +179,7 @@ resource "aws_lambda_permission" "api_gateway_permissions" {
 }
 
 resource "aws_lambda_function" "authorizer" {
+  count            = var.enable_authorizer ? 1 : 0 
   function_name    = "${var.DEPLOY_NAME}-gapAuthorizer"
   filename         = "${path.module}/artifacts/functions/authorizer.zip"
   source_code_hash = filebase64sha256("${path.module}/artifacts/functions/authorizer.zip")

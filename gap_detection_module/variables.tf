@@ -94,27 +94,38 @@ variable "state_machine_name_lst" {
   type        = list(string)
 }
 
+variable "enable_authorizer" {
+  type        = bool
+  description = "Deploys API gateway resource with authorization enabled and lambda authorizer code"
+  default     = false
+}
+
 variable "idp_host" {
   type        = string
   description = "Hostname + base path of identity provider"
+  default     = ""
 }
 
 variable "audience" {
   type        = string
   description = "Expected audience of the access token"
+  default     = ""
 }
 
 variable "admin_role" {
   type        = string
   description = "Name of admin group"
+  default     = ""
 }
 
 variable "public_role" {
   type        = string
   description = "Name of public group"
+  default     = ""
 }
 
 variable "authorized_hosts" {
   type        = list(string)
   description = "List of IP addresses of hosts that have read-only authorization without authentication"
+  default     = []
 }

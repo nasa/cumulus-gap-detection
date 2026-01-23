@@ -47,9 +47,10 @@ resource "aws_api_gateway_stage" "stage" {
 }
 
 resource "aws_lambda_permission" "authorizer_permission" {
+  count         = var.enable_authorizer ? 1 : 0
   statement_id  = "AllowAPIGatewayInvokeAuthorizer"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.authorizer.function_name
+  function_name = aws_lambda_function.authorizer[0].function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/authorizers/*"
 }

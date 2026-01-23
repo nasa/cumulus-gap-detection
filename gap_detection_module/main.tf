@@ -106,7 +106,8 @@ locals {
 
   openapi_template_vars = {
     DEPLOY_NAME = var.DEPLOY_NAME
-    authorizer_arn = aws_lambda_function.authorizer.arn
+    enable_authorizer  = var.enable_authorizer
+    authorizer_arn     = var.enable_authorizer ? aws_lambda_function.authorizer[0].arn : ""
     region = local.region
     lambda_invoke_arns = {
       for func_name in local.api_functions :
