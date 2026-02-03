@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/golang-jwt/jwt/v5"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 const (
@@ -39,7 +40,17 @@ var (
 
 func init() {
 	var err error
-	logger, err = zap.NewDevelopment()
+	config := zap.NewProductionConfig()
+
+	// Default to info, override with LOG_LEVEL env var
+	if logLevel := os.Getenv("LOG_LEVEL"); logLevel != "" {
+		var level zapcore.Level
+		if err := level.UnmarshalText([]byte(logLevel)); err == nil {
+			config.Level = zap.NewAtomicLevelAt(level)
+		}
+	}
+
+	logger, err = config.Build()
 	if err != nil {
 		panic(err)
 	}
@@ -146,6 +157,7 @@ func parseToken(authHeader string) (role, userID string) {
 
 	if err != nil || !parsed.Valid {
 		logger.Info("Invalid token", zap.Error(err))
+		logger.Debug("Token details", zap.Any("claims", parsed.Claims))
 		return "", ""
 	}
 
