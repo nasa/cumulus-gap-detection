@@ -56,15 +56,18 @@ class TestGapMigrationStreamMessageCompiler:
         assert inner_message["record"]["endingDateTime"] == "2000-01-02T00:00:00Z"
     
     @patch.dict(os.environ, {'QUEUE_URL': 'https://sqs.example.com/test-queue'})
+    @patch.dict(os.environ, {'DEPLOY_PREFIX': 'test_prefix'})
+    @patch.dict(os.environ, {'LAUNCHPAD_PASSPHRASE_SECRET_ARN': 'test_arn'})
     @patch('src.gapMigrationStreamMessageCompiler.gapMigrationStreamMessageCompiler.get_params')
     @patch('src.gapMigrationStreamMessageCompiler.gapMigrationStreamMessageCompiler.loop')
+    @patch('src.gapMigrationStreamMessageCompiler.gapMigrationStreamMessageCompiler.get_launchpad_token')
     def test_lambda_handler_success(self, mock_loop, mock_get_params, event, context):
         partitions = [
             ("2000-01-01T00:00:00Z", "2000-01-02T00:00:00Z"),
             ("2000-01-02T00:00:00Z", "2000-01-03T00:00:00Z")
         ]
         mock_get_params.return_value = (partitions, 2, 4000, 100)
-        
+        mock_get_token.return_value = "test_token"    
         result = lambda_handler(event, context)
         
         assert result["statusCode"] == 200
@@ -72,6 +75,9 @@ class TestGapMigrationStreamMessageCompiler:
         mock_loop.run_until_complete.assert_called_once()
     
     @patch.dict(os.environ, {'QUEUE_URL': 'https://sqs.example.com/test-queue'})
+    @patch.dict(os.environ, {'DEPLOY_PREFIX': 'test_prefix'})
+    @patch.dict(os.environ, {'LAUNCHPAD_PASSPHRASE_SECRET_ARN': 'test_arn'})
+    @patch('src.gapMigrationStreamMessageCompiler.gapMigrationStreamMessageCompiler.get_launchpad_token')
     def test_lambda_handler_missing_params(self, context):
         invalid_event = {
             "Records": [
@@ -87,8 +93,10 @@ class TestGapMigrationStreamMessageCompiler:
         assert "Missing short_name or version" in result["body"]
     
     @patch.dict(os.environ, {'QUEUE_URL': 'https://sqs.example.com/test-queue'})
+    @patch.dict(os.environ, {'DEPLOY_PREFIX': 'test_prefix'})
     @patch('src.gapMigrationStreamMessageCompiler.gapMigrationStreamMessageCompiler.get_params')
     @patch('src.gapMigrationStreamMessageCompiler.gapMigrationStreamMessageCompiler.loop')
+    @patch('src.gapMigrationStreamMessageCompiler.gapMigrationStreamMessageCompiler.get_launchpad_token')
     def test_lambda_handler_get_params_failure(self, mock_loop, mock_get_params, event, context):
         """Test when get_params returns an error"""
         mock_get_params.return_value = (None, {
@@ -101,13 +109,15 @@ class TestGapMigrationStreamMessageCompiler:
             lambda_handler(event, context)
     
     @patch.dict(os.environ, {'QUEUE_URL': 'https://sqs.example.com/test-queue'})
+    @patch.dict(os.environ, {'DEPLOY_PREFIX': 'test_prefix'})
+    @patch.dict(os.environ, {'LAUNCHPAD_PASSPHRASE_SECRET_ARN': 'test_arn'})
     @patch('src.gapMigrationStreamMessageCompiler.gapMigrationStreamMessageCompiler.get_params')
     @patch('src.gapMigrationStreamMessageCompiler.gapMigrationStreamMessageCompiler.loop')
+    @patch('src.gapMigrationStreamMessageCompiler.gapMigrationStreamMessageCompiler.get_launchpad_token')
     def test_lambda_handler_processing_exception(self, mock_loop, mock_get_params, event, context):
         """Test when collection processing raises an exception"""
         partitions = [("2000-01-01T00:00:00Z", "2000-01-02T00:00:00Z")]
         mock_get_params.return_value = (partitions, 2, 4000, 100)
-        
         # Make process_collection raise an exception
         mock_loop.run_until_complete.side_effect = Exception("Processing failed")
         
@@ -160,7 +170,7 @@ class TestGapMigrationStreamMessageCompiler:
         }]
         mock_collection_query.return_value = mock_collection_api
         
-        date_ranges, n_consumers, queue_size, num_granules = get_params("TEST", "1.0")
+        date_ranges, n_consumers, queue_size, num_granules = get_params("TEST", "1.0", "test_token)
         
         assert date_ranges is not None
         assert isinstance(n_consumers, int)
@@ -181,7 +191,7 @@ class TestGapMigrationStreamMessageCompiler:
         mock_collection_api.get_all.return_value = []
         mock_collection_query.return_value = mock_collection_api
         
-        date_ranges, error_response = get_params("NONEXISTENT", "1.0")
+        date_ranges, error_response = get_params("NONEXISTENT", "1.0", "test_token")
         
         assert date_ranges is None
         assert error_response["statusCode"] == 400
@@ -193,7 +203,7 @@ class TestGapMigrationStreamMessageCompiler:
         # Mock GranuleQuery to raise an exception
         mock_granule_query.side_effect = Exception("CMR API unavailable")
         
-        date_ranges, error_response = get_params("TEST", "1.0")
+        date_ranges, error_response = get_params("TEST", "1.0", "test_token")
         
         assert date_ranges is None
         assert error_response["statusCode"] == 400
@@ -220,7 +230,7 @@ class TestGapMigrationStreamMessageCompiler:
             
             with patch('asyncio.sleep', new_callable=AsyncMock):  # Mock sleep to speed up test
                 with pytest.raises(Exception, match="Max retries reached"):
-                    await fetch_cmr_range(mock_session, "https://cmr.test.com", params, result_queue, fetch_stats)
+                    await fetch_cmr_range(mock_session, "https://cmr.test.com", params, result_queue, fetch_stats, "test_token")
         
         asyncio.run(run_test())
 
@@ -332,7 +342,7 @@ class TestGapMigrationStreamMessageCompiler:
                 
                 await process_collection(
                     partitions, "TEST", "1.0", result_queue, 
-                    "https://sqs.test.com", 2, 1000
+                    "https://sqs.test.com", 2, 1000, "test_token"
                 )
                 
                 # Verify functions were called
@@ -367,7 +377,7 @@ class TestGapMigrationStreamMessageCompiler:
 
                 await process_collection(
                     partitions, "TEST", "1.0", result_queue, 
-                    "https://sqs.test.com", 2, 1000
+                    "https://sqs.test.com", 2, 1000, "test_token"
                 )
                 
                 # Verify that the error was logged when the exception occurred
@@ -425,7 +435,7 @@ class TestGapMigrationStreamMessageCompiler:
             with patch('src.gapMigrationStreamMessageCompiler.gapMigrationStreamMessageCompiler.datetime') as mock_datetime:
                 mock_datetime.now.return_value.isoformat.return_value = "2023-01-01T00:00:00"
                 
-                date_ranges, n_consumers, queue_size, num_granules = get_params("TEST", "1.0")
+                date_ranges, n_consumers, queue_size, num_granules = get_params("TEST", "1.0", "test_token")
                 
                 assert date_ranges is not None
                 assert num_granules == 500
@@ -469,7 +479,7 @@ async def test_max_retries_exceeded():
     
     with patch('asyncio.sleep', new_callable=AsyncMock):
         with pytest.raises(Exception, match="Max retries reached"):
-            await fetch_cmr_range(mock_session, "url", params, result_queue, fetch_stats)
+            await fetch_cmr_range(mock_session, "url", params, result_queue, fetch_stats, "test_token")
 
 @pytest.mark.asyncio
 async def test_empty_granules_return():
@@ -486,7 +496,7 @@ async def test_empty_granules_return():
     mock_session = MagicMock()
     mock_session.get.return_value = MagicMock(__aenter__=AsyncMock(return_value=empty_response))
     
-    await fetch_cmr_range(mock_session, "url", params, result_queue, fetch_stats)
+    await fetch_cmr_range(mock_session, "url", params, result_queue, fetch_stats, "test_token")
     
     assert result_queue.put.call_count == 0
     assert fetch_stats["total"] == 0
@@ -512,7 +522,7 @@ async def test_exception_retry_then_success():
     ]
     
     with patch('asyncio.sleep', new_callable=AsyncMock):
-        await fetch_cmr_range(mock_session, "url", params, result_queue, fetch_stats)
+        await fetch_cmr_range(mock_session, "url", params, result_queue, fetch_stats, "test_token")
 
 
 @pytest.mark.asyncio
@@ -527,7 +537,7 @@ async def test_exception_max_retries():
     
     with patch('asyncio.sleep', new_callable=AsyncMock):
         with pytest.raises(Exception, match="Max retries reached"):
-            await fetch_cmr_range(mock_session, "url", params, result_queue, fetch_stats)
+            await fetch_cmr_range(mock_session, "url", params, result_queue, fetch_stats, "test_token")
 
 
 @pytest.mark.asyncio
@@ -561,7 +571,7 @@ async def test_granule_processing_section():
     with patch('src.gapMigrationStreamMessageCompiler.gapMigrationStreamMessageCompiler.build_message') as mock_build:
         mock_build.side_effect = [{"msg": "1"}, {"msg": "2"}]
         
-        await fetch_cmr_range(mock_session, "url", params, result_queue, fetch_stats)
+        await fetch_cmr_range(mock_session, "url", params, result_queue, fetch_stats, "test_token")
     
     # Verify granule processing
     assert result_queue.put.call_count == 2  # One call per granule
@@ -609,7 +619,7 @@ async def test_break_statement_coverage():
     with patch('src.gapMigrationStreamMessageCompiler.gapMigrationStreamMessageCompiler.build_message') as mock_build:
         mock_build.side_effect = [{"msg": "1"}, {"msg": "2"}]
         
-        await fetch_cmr_range(mock_session, "url", params, result_queue, fetch_stats)
+        await fetch_cmr_range(mock_session, "url", params, result_queue, fetch_stats, "test_token")
     
     # Verify both pages were processed
     assert result_queue.put.call_count == 2
