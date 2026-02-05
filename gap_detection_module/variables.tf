@@ -96,3 +96,7 @@ variable "state_machine_name_lst" {
   type        = list(string)
 }
 
+variable "launchpad_passphrase_secret_arn" {
+  description = "ARN of the secret containing the Launchpad passphrase"
+  type        = string
+}

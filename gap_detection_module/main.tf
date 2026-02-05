@@ -39,6 +39,8 @@ locals {
       memory_size = 2048
       variables = {
         QUEUE_URL = aws_sqs_queue.gap_detection_ingest_queue.url
+        DEPLOY_PREFIX = var.DEPLOY_NAME
+        LAUNCHPAD_PASSPHRASE_SECRET_ARN = var.launchpad_passphrase_secret_arn
       }
     }
     gapReporter = {
