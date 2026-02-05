@@ -21,9 +21,6 @@ def get_launchpad_token():
     deploy_prefix = os.getenv('DEPLOY_PREFIX')
     secret_arn = os.getenv('LAUNCHPAD_PASSPHRASE_SECRET_ARN')
     
-    if not deploy_prefix or not secret_arn:
-        raise ValueError("DEPLOY_PREFIX and LAUNCHPAD_PASSPHRASE_SECRET_ARN must be set")
-    
     s3 = boto3.client('s3')
     secrets = boto3.client('secretsmanager')
     
