@@ -170,7 +170,7 @@ class TestGapMigrationStreamMessageCompiler:
         }]
         mock_collection_query.return_value = mock_collection_api
         
-        date_ranges, n_consumers, queue_size, num_granules = get_params("TEST", "1.0", "test_token)
+        date_ranges, n_consumers, queue_size, num_granules = get_params("TEST", "1.0", "test_token")
         
         assert date_ranges is not None
         assert isinstance(n_consumers, int)
