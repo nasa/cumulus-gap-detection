@@ -58,16 +58,16 @@ class TestGapMigrationStreamMessageCompiler:
     @patch.dict(os.environ, {'QUEUE_URL': 'https://sqs.example.com/test-queue'})
     @patch.dict(os.environ, {'DEPLOY_PREFIX': 'test_prefix'})
     @patch.dict(os.environ, {'LAUNCHPAD_PASSPHRASE_SECRET_ARN': 'test_arn'})
+    @patch('src.gapMigrationStreamMessageCompiler.gapMigrationStreamMessageCompiler.get_launchpad_token')
     @patch('src.gapMigrationStreamMessageCompiler.gapMigrationStreamMessageCompiler.get_params')
     @patch('src.gapMigrationStreamMessageCompiler.gapMigrationStreamMessageCompiler.loop')
-    @patch('src.gapMigrationStreamMessageCompiler.gapMigrationStreamMessageCompiler.get_launchpad_token')
-    def test_lambda_handler_success(self, mock_loop, mock_get_params, event, context):
+    def test_lambda_handler_success(self, mock_loop, mock_get_params, mock_get_launchpad_token, event, context):
         partitions = [
             ("2000-01-01T00:00:00Z", "2000-01-02T00:00:00Z"),
             ("2000-01-02T00:00:00Z", "2000-01-03T00:00:00Z")
         ]
         mock_get_params.return_value = (partitions, 2, 4000, 100)
-        mock_get_token.return_value = "test_token"    
+        mock_get_launchpad_token.return_value = "test_token"
         result = lambda_handler(event, context)
         
         assert result["statusCode"] == 200
@@ -94,11 +94,13 @@ class TestGapMigrationStreamMessageCompiler:
     
     @patch.dict(os.environ, {'QUEUE_URL': 'https://sqs.example.com/test-queue'})
     @patch.dict(os.environ, {'DEPLOY_PREFIX': 'test_prefix'})
+    @patch.dict(os.environ, {'LAUNCHPAD_PASSPHRASE_SECRET_ARN': 'test_arn'})
+    @patch('src.gapMigrationStreamMessageCompiler.gapMigrationStreamMessageCompiler.get_launchpad_token')
     @patch('src.gapMigrationStreamMessageCompiler.gapMigrationStreamMessageCompiler.get_params')
     @patch('src.gapMigrationStreamMessageCompiler.gapMigrationStreamMessageCompiler.loop')
-    @patch('src.gapMigrationStreamMessageCompiler.gapMigrationStreamMessageCompiler.get_launchpad_token')
-    def test_lambda_handler_get_params_failure(self, mock_loop, mock_get_params, event, context):
+    def test_lambda_handler_get_params_failure(self, mock_loop, mock_get_params, mock_get_launchpad_token, event, context):
         """Test when get_params returns an error"""
+        mock_get_launchpad_token.return_value = "test_token"
         mock_get_params.return_value = (None, {
             "statusCode": 400,
             "body": json.dumps({"error": "Collection not found"})
@@ -111,10 +113,10 @@ class TestGapMigrationStreamMessageCompiler:
     @patch.dict(os.environ, {'QUEUE_URL': 'https://sqs.example.com/test-queue'})
     @patch.dict(os.environ, {'DEPLOY_PREFIX': 'test_prefix'})
     @patch.dict(os.environ, {'LAUNCHPAD_PASSPHRASE_SECRET_ARN': 'test_arn'})
+    @patch('src.gapMigrationStreamMessageCompiler.gapMigrationStreamMessageCompiler.get_launchpad_token')
     @patch('src.gapMigrationStreamMessageCompiler.gapMigrationStreamMessageCompiler.get_params')
     @patch('src.gapMigrationStreamMessageCompiler.gapMigrationStreamMessageCompiler.loop')
-    @patch('src.gapMigrationStreamMessageCompiler.gapMigrationStreamMessageCompiler.get_launchpad_token')
-    def test_lambda_handler_processing_exception(self, mock_loop, mock_get_params, event, context):
+    def test_lambda_handler_processing_exception(self, mock_loop, mock_get_params, mock_get_launchpad_token, event, context):
         """Test when collection processing raises an exception"""
         partitions = [("2000-01-01T00:00:00Z", "2000-01-02T00:00:00Z")]
         mock_get_params.return_value = (partitions, 2, 4000, 100)
@@ -124,8 +126,8 @@ class TestGapMigrationStreamMessageCompiler:
         result = lambda_handler(event, context)
         
         assert result["statusCode"] == 500
-        assert "Processing failed" in result["body"]
-    
+        assert "Processing failed" in result["body"]    
+
     def test_lambda_handler_missing_environment_variable(self, event, context):
         """Test when QUEUE_URL environment variable is missing"""
         with patch.dict(os.environ, {}, clear=True):
@@ -159,17 +161,20 @@ class TestGapMigrationStreamMessageCompiler:
         """Test successful get_params execution"""
         # Mock GranuleQuery
         mock_granule_api = MagicMock()
+        mock_granule_api.parameters.return_value = mock_granule_api
         mock_granule_api.hits.return_value = 1000
-        mock_granule_query.return_value = mock_granule_api
+        mock_granule_query.return_value.token.return_value = mock_granule_api
+
         
         # Mock CollectionQuery
         mock_collection_api = MagicMock()
+        mock_collection_api.parameters.return_value = mock_collection_api
         mock_collection_api.get_all.return_value = [{
             "time_start": "2020-01-01T00:00:00Z",
             "time_end": "2020-12-31T23:59:59Z"
         }]
-        mock_collection_query.return_value = mock_collection_api
-        
+        mock_collection_query.return_value.token.return_value = mock_collection_api
+
         date_ranges, n_consumers, queue_size, num_granules = get_params("TEST", "1.0", "test_token")
         
         assert date_ranges is not None
@@ -183,13 +188,15 @@ class TestGapMigrationStreamMessageCompiler:
         """Test get_params when no collections are found"""
         # Mock GranuleQuery
         mock_granule_api = MagicMock()
+        mock_granule_api.parameters.return_value = mock_granule_api
         mock_granule_api.hits.return_value = 1000
-        mock_granule_query.return_value = mock_granule_api
+        mock_granule_query.return_value.token.return_value = mock_granule_api
         
         # Mock CollectionQuery to return empty list
         mock_collection_api = MagicMock()
+        mock_collection_api.parameters.return_value = mock_collection_api
         mock_collection_api.get_all.return_value = []
-        mock_collection_query.return_value = mock_collection_api
+        mock_collection_query.return_value.token.return_value = mock_collection_api
         
         date_ranges, error_response = get_params("NONEXISTENT", "1.0", "test_token")
         
@@ -421,16 +428,18 @@ class TestGapMigrationStreamMessageCompiler:
         with patch('src.gapMigrationStreamMessageCompiler.gapMigrationStreamMessageCompiler.GranuleQuery') as mock_granule_query:
             # Mock GranuleQuery
             mock_granule_api = MagicMock()
+            mock_granule_api.parameters.return_value = mock_granule_api
             mock_granule_api.hits.return_value = 500
-            mock_granule_query.return_value = mock_granule_api
+            mock_granule_query.return_value.token.return_value = mock_granule_api
             
             # Mock CollectionQuery with no end date
             mock_collection_api = MagicMock()
+            mock_collection_api.parameters.return_value = mock_collection_api
             mock_collection_api.get_all.return_value = [{
                 "time_start": "2020-01-01T00:00:00Z",
                 "time_end": None  # No end date
             }]
-            mock_collection_query.return_value = mock_collection_api
+            mock_collection_query.return_value.token.return_value = mock_collection_api
             
             with patch('src.gapMigrationStreamMessageCompiler.gapMigrationStreamMessageCompiler.datetime') as mock_datetime:
                 mock_datetime.now.return_value.isoformat.return_value = "2023-01-01T00:00:00"
