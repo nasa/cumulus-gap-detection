@@ -1,8 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"slices"
 	"strings"
@@ -12,6 +17,9 @@ import (
 	"github.com/MicahParks/keyfunc/v2"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/secretsmanager"
 	"github.com/golang-jwt/jwt/v5"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -23,10 +31,13 @@ const (
 )
 
 var (
-	jwks     *keyfunc.JWKS
-	jwksOnce sync.Once
-	jwksErr  error
-	logger   *zap.Logger
+	jwks          *keyfunc.JWKS
+	jwksOnce      sync.Once
+	jwksErr       error
+	logger        *zap.Logger
+	certCache     *tls.Certificate
+	certCacheOnce sync.Once
+	certCacheErr  error
 
 	config struct {
 		jwksURL         string
@@ -34,6 +45,8 @@ var (
 		audience        string
 		adminRole       string
 		publicRole      string
+		validateURL     string
+		secretArn       string
 		authorizedHosts []string
 	}
 )
@@ -74,6 +87,8 @@ func initConfig() {
 		config.audience = getEnv("AUDIENCE")
 		config.adminRole = getEnv("ADMIN_ROLE")
 		config.publicRole = getEnv("PUBLIC_ROLE")
+		config.validateURL = getEnv("TOKEN_SERVICE_ENDPOINT")
+		config.secretArn = getEnv("SERVICE_ACCOUNT_SECRET_ARN")
 		config.jwksURL = fmt.Sprintf(jwksURLFmt, idpHost)
 		config.issuer = fmt.Sprintf(issuerFmt, idpHost)
 
@@ -129,6 +144,102 @@ func generatePolicy(effect, message, userID, role string, event events.APIGatewa
 	}
 }
 
+func loadServiceAccountCert() (*tls.Certificate, error) {
+	certCacheOnce.Do(func() {
+		logger.Debug("SA_CERT: Loading service account certificate from Secrets Manager",
+			zap.String("secret_arn", config.secretArn))
+
+		sess := session.Must(session.NewSession())
+		svc := secretsmanager.New(sess)
+
+		result, err := svc.GetSecretValue(&secretsmanager.GetSecretValueInput{
+			SecretId: aws.String(config.secretArn),
+		})
+		if err != nil {
+			certCacheErr = fmt.Errorf("failed to get secret: %w", err)
+			return
+		}
+
+		logger.Debug("SA_CERT: Successfully retrieved secret from Secrets Manager",
+			zap.Int("secret_length", len(*result.SecretString)))
+
+		var secret struct {
+			CertPEM string `json:"cert_pem"`
+			KeyPEM  string `json:"key_pem"`
+		}
+		if err := json.Unmarshal([]byte(*result.SecretString), &secret); err != nil {
+			certCacheErr = fmt.Errorf("failed to unmarshal secret: %w", err)
+			return
+		}
+
+		cert, err := tls.X509KeyPair([]byte(secret.CertPEM), []byte(secret.KeyPEM))
+		if err != nil {
+			certCacheErr = fmt.Errorf("failed to parse X509 key pair: %w", err)
+			return
+		}
+
+		certCache = &cert
+	})
+	return certCache, certCacheErr
+}
+
+func validateServiceAccountToken(token string) bool {
+	logger.Debug("SM_VALIDATE: Starting service account token validation",
+		zap.String("token_prefix", token[:min(10, len(token))]),
+		zap.Int("token_length", len(token)))
+	cert, err := loadServiceAccountCert()
+	if err != nil {
+		logger.Error("Failed to load service account cert", zap.Error(err))
+	} else {
+		logger.Debug("SM_VALIDATE: Certificate loaded successfully, creating HTTP client")
+
+		client := &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					Certificates: []tls.Certificate{*cert},
+				},
+			},
+		}
+
+		reqBody, _ := json.Marshal(map[string]string{"token": token})
+		logger.Debug("SM_VALIDATE: Sending validation request",
+			zap.String("url", config.validateURL),
+			zap.Int("request_body_length", len(reqBody)))
+
+		resp, err := client.Post(config.validateURL, "application/json", bytes.NewReader(reqBody))
+		if err != nil {
+			logger.Error("Service account validation request failed", zap.Error(err))
+		} else {
+			defer resp.Body.Close()
+			logger.Debug("SM_VALIDATE: Received response",
+				zap.Int("status_code", resp.StatusCode),
+				zap.String("status", resp.Status))
+
+			body, _ := io.ReadAll(resp.Body)
+			logger.Debug("SM_VALIDATE: Response body received",
+				zap.Int("body_length", len(body)),
+				zap.String("body", string(body)))
+
+			if resp.StatusCode != 200 {
+				logger.Info("Service account validation rejected", zap.Int("status", resp.StatusCode))
+			} else {
+				var result struct {
+					Status string `json:"status"`
+				}
+
+				if err := json.Unmarshal(body, &result); err != nil {
+					logger.Error("Failed to parse validation response", zap.Error(err))
+				} else {
+					logger.Info("SA_VALIDATE: Validation completed",
+						zap.String("status", result.Status))
+					return result.Status == "success"
+				}
+			}
+		}
+	}
+	return false
+}
+
 func parseToken(authHeader string) (role, userID string) {
 	// Extract bearer token
 	token := strings.TrimPrefix(authHeader, "Bearer ")
@@ -137,34 +248,41 @@ func parseToken(authHeader string) (role, userID string) {
 		return "", ""
 	}
 
-	// Initialize JWKS
-	if err := initJWKS(); err != nil {
-		logger.Error("JWKS initialization failed",
-			zap.Error(err),
-			zap.String("jwks_url", config.jwksURL),
-		)
-		return "", ""
+	n := len(token)
+	if n > 3 && token[:3] == "eyJ" && token[n-1] != '=' {
+		// Initialize JWKS
+		if err := initJWKS(); err != nil {
+			logger.Error("JWKS initialization failed",
+				zap.Error(err),
+				zap.String("jwks_url", config.jwksURL),
+			)
+		} else {
+			// Validate token: signature, algorithm, issuer, audience
+			parsed, err := jwt.Parse(
+				token,
+				jwks.Keyfunc,
+				jwt.WithValidMethods([]string{"RS256"}),
+				jwt.WithIssuer(config.issuer),
+				jwt.WithAudience(config.audience),
+			)
+			logger.Debug("Token details", zap.Any("claims", parsed.Claims))
+			if err == nil && parsed.Valid {
+				claims, _ := parsed.Claims.(jwt.MapClaims)
+				role, _ = claims["groups"].(string)
+				userID, _ = claims["AgencyUID"].(string)
+				return role, userID
+			}
+			logger.Info("Invalid JWT", zap.Error(err))
+		}
+	} else {
+
+		logger.Debug("Detected SM token")
+		if validateServiceAccountToken(token) {
+			return config.publicRole, "Service Account"
+		}
 	}
 
-	// Validate token: signature, algorithm, issuer, audience
-	parsed, err := jwt.Parse(
-		token,
-		jwks.Keyfunc,
-		jwt.WithValidMethods([]string{"RS256"}),
-		jwt.WithIssuer(config.issuer),
-		jwt.WithAudience(config.audience),
-	)
-
-	if err != nil || !parsed.Valid {
-		logger.Info("Invalid token", zap.Error(err))
-		logger.Debug("Token details", zap.Any("claims", parsed.Claims))
-		return "", ""
-	}
-
-	claims, _ := parsed.Claims.(jwt.MapClaims)
-	role, _ = claims["groups"].(string)
-	userID, _ = claims["AgencyUID"].(string)
-	return role, userID
+	return "", ""
 }
 
 func Handler(ctx context.Context, event events.APIGatewayCustomAuthorizerRequestTypeRequest) (events.APIGatewayCustomAuthorizerResponse, error) {

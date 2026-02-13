@@ -129,3 +129,15 @@ variable "authorized_hosts" {
   description = "List of IP addresses of hosts that have read-only authorization without authentication"
   default     = []
 }
+
+variable "token_service_endpoint" {
+  type        = string
+  description = "URL of the Launchpad Token Service"
+  default     = ""
+}
+
+variable "log_level" {
+  type        = string
+  description = "Log verbosity"
+  default     = ""
+}

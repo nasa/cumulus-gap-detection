@@ -157,6 +157,22 @@ resource "aws_iam_role_policy" "lambda_rds_secret_policy" {
   })
 }
 
+resource "aws_iam_role_policy" "lambda_service_account_secret_policy" {
+  count = var.enable_authorizer ? 1 : 0
+  name  = "${var.DEPLOY_NAME}-gap-detection-service-account-secret-policy"
+  role  = var.lambda_processing_role_name
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = ["secretsmanager:GetSecretValue"]
+        Resource = aws_secretsmanager_secret.service_account_cert[0].arn
+      }
+    ]
+  })
+}
+
 # Allow lambda security group to connect to RDS proxy
 resource "aws_security_group_rule" "lambda_to_proxy" {
   type                     = "egress"
@@ -191,11 +207,14 @@ resource "aws_lambda_function" "authorizer" {
   
   environment {
     variables = {
+      LOG_LEVEL   = var.log_level
       IDP_HOST    = var.idp_host
       AUDIENCE    = var.audience
       ADMIN_ROLE  = var.admin_role
       PUBLIC_ROLE = var.public_role
       AUTHORIZED_HOSTS = join(",", var.authorized_hosts)
+      TOKEN_SERVICE_ENDPOINT = var.token_service_endpoint
+      SERVICE_ACCOUNT_SECRET_ARN = aws_secretsmanager_secret.service_account_cert[0].arn
     }
   }
 }
