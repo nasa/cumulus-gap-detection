@@ -18,14 +18,12 @@ from cryptography.hazmat.primitives.serialization import pkcs12, Encoding, Priva
 
 def get_launchpad_token():
     """Retrieves Launchpad token using client certificate authentication."""
-    deploy_prefix = os.getenv('DEPLOY_PREFIX')
-    secret_arn = os.getenv('LAUNCHPAD_PASSPHRASE_SECRET_ARN')
-    
     s3 = boto3.client('s3')
     secrets = boto3.client('secretsmanager')
-    
-    s3_key = f"{deploy_prefix}/crypto/gesdiscLaunchpadCMR.pfx"
-    bucket = f"{deploy_prefix}-internal"
+    secret_arn = os.getenv('LAUNCHPAD_PASSPHRASE_SECRET_ARN')
+    bucket = os.getenv("LAUNCHPAD_PFX_S3_BUCKET")
+    s3_key = os.getenv("LAUNCHPAD_PFX_S3_KEY")
+    token_endpoint = os.getenv("LAUNCHPAD_TOKEN_ENDPOINT")
     cert_bytes = s3.get_object(Bucket=bucket, Key=s3_key)['Body'].read()
     secret_string = secrets.get_secret_value(SecretId=secret_arn)['SecretString']
     passphrase = json.loads(secret_string)['launchpad_passphrase']
@@ -43,7 +41,7 @@ def get_launchpad_token():
     
     try:
         response = requests.get(
-            'https://api.launchpad.nasa.gov/icam/api/sm/v1/gettoken',
+            token_endpoint,
             cert=(cert_path, key_path),
             timeout=30
         )
@@ -404,7 +402,7 @@ def lambda_handler(event, context):
     """
     # Parse input
     try:
-        validate_environment_variables(["QUEUE_URL", "LAUNCHPAD_PASSPHRASE_SECRET_ARN", "DEPLOY_PREFIX"])
+        validate_environment_variables(["QUEUE_URL","LAUNCHPAD_TOKEN_ENDPOINT", "LAUNCHPAD_PASSPHRASE_SECRET_ARN",  "LAUNCHPAD_PFX_S3_BUCKET", "LAUNCHPAD_PFX_S3_KEY"])
         destination_queue_url = os.getenv("QUEUE_URL")
         sns_message = json.loads(event["Records"][0]["Sns"]["Message"])
         short_name = sns_message.get("short_name")

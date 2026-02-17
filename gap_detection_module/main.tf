@@ -41,6 +41,9 @@ locals {
         QUEUE_URL = aws_sqs_queue.gap_detection_ingest_queue.url
         DEPLOY_PREFIX = var.DEPLOY_NAME
         LAUNCHPAD_PASSPHRASE_SECRET_ARN = var.launchpad_passphrase_secret_arn
+        LAUNCHPAD_PFX_S3_BUCKET = var.launchpad_pfx_s3_bucket
+        LAUNCHPAD_PFX_S3_KEY = var.launchpad_pfx_s3_key
+        LAUNCHPAD_TOKEN_ENDPOINT = var.launchpad_token_endpoint
       }
     }
     gapReporter = {

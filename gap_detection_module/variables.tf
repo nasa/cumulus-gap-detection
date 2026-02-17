@@ -100,3 +100,18 @@ variable "launchpad_passphrase_secret_arn" {
   description = "ARN of the secret containing the Launchpad passphrase"
   type        = string
 }
+
+variable "launchpad_pfx_s3_bucket" {
+  description = "Name of the s3 bucket containing the Launchpad pfx bundle"
+  type        = string
+}
+
+variable "launchpad_pfx_s3_key" {
+  description = "s3 key of the Launchpad pfx bundle object"
+  type        = string
+}
+
+variable "launchpad_token_endpoint" {
+  description = "Endpoint of the /gettoken Launchpad service"
+  type        = string
+}
