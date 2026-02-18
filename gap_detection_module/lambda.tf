@@ -167,7 +167,7 @@ resource "aws_iam_role_policy" "lambda_service_account_secret_policy" {
       {
         Effect = "Allow"
         Action = ["secretsmanager:GetSecretValue"]
-        Resource = aws_secretsmanager_secret.service_account_cert[0].arn
+        Resource = aws_secretsmanager_secret.service_account_cert.arn
       }
     ]
   })
@@ -214,7 +214,7 @@ resource "aws_lambda_function" "authorizer" {
       PUBLIC_ROLE = var.public_role
       AUTHORIZED_HOSTS = join(",", var.authorized_hosts)
       TOKEN_SERVICE_ENDPOINT = var.token_service_endpoint
-      SERVICE_ACCOUNT_SECRET_ARN = aws_secretsmanager_secret.service_account_cert[0].arn
+      SERVICE_ACCOUNT_SECRET_ARN = aws_secretsmanager_secret.service_account_cert.arn
     }
   }
 }
