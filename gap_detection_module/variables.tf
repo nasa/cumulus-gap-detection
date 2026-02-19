@@ -112,7 +112,7 @@ variable "launchpad_pfx_s3_key" {
 variable "launchpad_token_endpoint" {
   description = "Endpoint of the /gettoken Launchpad service"
   type        = string
-
+}
 
 variable "enable_authorizer" {
   type        = bool
