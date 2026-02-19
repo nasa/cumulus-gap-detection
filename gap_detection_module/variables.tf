@@ -5,7 +5,7 @@ variable "DEPLOY_NAME" {
 
 variable "engine_version" {
   description = "Postgres engine version for cluster"
-  default     = "15.4"
+  default     = "15.12"
   type        = string
 }
 
@@ -93,6 +93,26 @@ variable "state_machine_name_lst" {
   description = "List of state machine names used to construct prefixes for ingest filter policy"
   type        = list(string)
 }
+
+variable "launchpad_passphrase_secret_arn" {
+  description = "ARN of the secret containing the Launchpad passphrase"
+  type        = string
+}
+
+variable "launchpad_pfx_s3_bucket" {
+  description = "Name of the s3 bucket containing the Launchpad pfx bundle"
+  type        = string
+}
+
+variable "launchpad_pfx_s3_key" {
+  description = "s3 key of the Launchpad pfx bundle object"
+  type        = string
+}
+
+variable "launchpad_token_endpoint" {
+  description = "Endpoint of the /gettoken Launchpad service"
+  type        = string
+
 
 variable "enable_authorizer" {
   type        = bool

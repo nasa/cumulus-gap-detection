@@ -10,6 +10,48 @@ import aiohttp
 import aioboto3
 from aiobotocore.config import AioConfig
 from utils import validate_environment_variables
+import ssl
+import tempfile
+import boto3
+import requests
+from cryptography.hazmat.primitives.serialization import pkcs12, Encoding, PrivateFormat, NoEncryption
+
+def get_launchpad_token():
+    """Retrieves Launchpad token using client certificate authentication."""
+    s3 = boto3.client('s3')
+    secrets = boto3.client('secretsmanager')
+    secret_arn = os.getenv('LAUNCHPAD_PASSPHRASE_SECRET_ARN')
+    bucket = os.getenv("LAUNCHPAD_PFX_S3_BUCKET")
+    s3_key = os.getenv("LAUNCHPAD_PFX_S3_KEY")
+    token_endpoint = os.getenv("LAUNCHPAD_TOKEN_ENDPOINT")
+    cert_bytes = s3.get_object(Bucket=bucket, Key=s3_key)['Body'].read()
+    secret_string = secrets.get_secret_value(SecretId=secret_arn)['SecretString']
+    passphrase = json.loads(secret_string)['launchpad_passphrase']
+    private_key, certificate, _ = pkcs12.load_key_and_certificates(cert_bytes, passphrase.encode())
+    cert_pem = certificate.public_bytes(Encoding.PEM)
+    key_pem = private_key.private_bytes(Encoding.PEM, PrivateFormat.TraditionalOpenSSL, NoEncryption())
+    
+    with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix='.crt') as cert_file:
+        cert_file.write(cert_pem)
+        cert_path = cert_file.name
+    
+    with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix='.key') as key_file:
+        key_file.write(key_pem)
+        key_path = key_file.name
+    
+    try:
+        response = requests.get(
+            token_endpoint,
+            cert=(cert_path, key_path),
+            timeout=30
+        )
+        response.raise_for_status()
+        return response.json()['sm_token']
+    finally:
+        os.unlink(cert_path)
+        os.unlink(key_path)
+
+
 
 # Configure logging
 logger = logging.getLogger()
@@ -70,15 +112,15 @@ def build_message(granule, short_name, version):
     return {"Id": granule.get("id", ""), "MessageBody": json.dumps(granule_message)}
 
 
-def get_params(short_name, version, max_producers=8, consumer_ratio=1.5):
+def get_params(short_name, version, token, max_producers=8, consumer_ratio=1.5):
     """Calculates parameters for processing resources based on collection size"""
     try:
         # Get temporal partitions
-        api = GranuleQuery()
+        api = GranuleQuery().token(token)
         api.parameters(short_name=short_name, version=version)
         num_granules = api.hits()
 
-        api = CollectionQuery()
+        api = CollectionQuery().token(token)
         api.parameters(short_name=short_name, version=version)
         results = api.get_all()
 
@@ -124,7 +166,7 @@ def get_params(short_name, version, max_producers=8, consumer_ratio=1.5):
 ## =====================================================================================
 ## Main processing functions
 ## =====================================================================================
-async def fetch_cmr_range(session, url, params, result_queue, fetch_stats):
+async def fetch_cmr_range(session, url, params, result_queue, fetch_stats, token):
     """
     Performs paginated requests to the CMR API over a given temporal range using search-after
     and enqueues granule messages into the results queue.
@@ -143,7 +185,7 @@ async def fetch_cmr_range(session, url, params, result_queue, fetch_stats):
     max_retries = 3
     
     while True:
-        headers = {"CMR-Search-After": search_after} if search_after else {}
+        headers = {"Echo-Token": token, "CMR-Search-After": search_after} if search_after else {"Echo-Token": token}
 
         for retry in range(max_retries + 1):
             try:
@@ -249,6 +291,7 @@ async def process_collection(
     destination_queue,
     n_consumers,
     total_granules,
+    token,
 ):
     """
     Orchestrates collection processing using an async producer-consumer pattern.
@@ -299,6 +342,7 @@ async def process_collection(
                                 range_params,
                                 result_queue,
                                 fetch_stats,
+                                token,
                             )
                         )
                         producers.append(task)
@@ -358,7 +402,7 @@ def lambda_handler(event, context):
     """
     # Parse input
     try:
-        validate_environment_variables(["QUEUE_URL"])
+        validate_environment_variables(["QUEUE_URL","LAUNCHPAD_TOKEN_ENDPOINT", "LAUNCHPAD_PASSPHRASE_SECRET_ARN",  "LAUNCHPAD_PFX_S3_BUCKET", "LAUNCHPAD_PFX_S3_KEY"])
         destination_queue_url = os.getenv("QUEUE_URL")
         sns_message = json.loads(event["Records"][0]["Sns"]["Message"])
         short_name = sns_message.get("short_name")
@@ -383,13 +427,14 @@ def lambda_handler(event, context):
                 }
             ),
         }
-
+    token = get_launchpad_token()
     # Determine processing resources based on collection size
     max_producers = 8
     consumer_ratio = 1.5
     temporal_partitions, n_consumers, queue_size, total_granules = get_params(
         short_name,
         version,
+        token
     )
     result_queue = asyncio.Queue(queue_size)
 
@@ -404,6 +449,7 @@ def lambda_handler(event, context):
                 destination_queue_url,
                 n_consumers,
                 total_granules,
+                token
             )
         )
         logger.info(f"Lambda execution completed successfully for {short_name} v{version}")
