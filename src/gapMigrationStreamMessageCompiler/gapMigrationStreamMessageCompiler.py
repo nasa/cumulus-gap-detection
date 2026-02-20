@@ -16,6 +16,20 @@ import boto3
 import requests
 from cryptography.hazmat.primitives.serialization import pkcs12, Encoding, PrivateFormat, NoEncryption
 
+# Configure logging
+logger = logging.getLogger(__name__)
+logger.setLevel(getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO))
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
+loop = asyncio.get_event_loop()
+
+## =====================================================================================
+## Helper functions
+## =====================================================================================
 def get_launchpad_token():
     """Retrieves Launchpad token using client certificate authentication."""
     s3 = boto3.client('s3')
@@ -57,25 +71,6 @@ def get_launchpad_token():
         os.unlink(cert_path)
         os.unlink(key_path)
 
-
-
-# Configure logging
-logger = logging.getLogger()
-log_level = os.getenv("LOG_LEVEL", "INFO").upper()
-logger.setLevel(getattr(logging, log_level, logging.INFO))
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-
-
-loop = asyncio.get_event_loop()
-
-
-## =====================================================================================
-## Helper functions
-## =====================================================================================
 def split_date_ranges(start_date, end_date, num_ranges):
     """
     Splits a date range into a specified number of equal subranges.
