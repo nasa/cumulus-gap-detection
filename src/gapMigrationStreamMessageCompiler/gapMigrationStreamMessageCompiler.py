@@ -42,7 +42,7 @@ def get_launchpad_token():
     logger.debug(f"Loaded cert from s3://{bucket}/{s3_key}: {len(cert_bytes)} bytes, magic={cert_bytes[:4].hex()}")
 
     secret_string = secrets.get_secret_value(SecretId=secret_arn)['SecretString']
-    passphrase = json.loads(secret_string)['launchpad_passphrase']
+    passphrase = json.loads(secret_string)['launchpad_passphrase'].strip()
     logger.debug(f"Passphrase loaded from secret {secret_arn}: len={len(passphrase)}")
 
     private_key, certificate, _ = pkcs12.load_key_and_certificates(cert_bytes, passphrase.encode())
