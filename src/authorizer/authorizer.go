@@ -87,7 +87,7 @@ func initConfig() {
 		config.audience = getEnv("AUDIENCE")
 		config.adminRole = getEnv("ADMIN_ROLE")
 		config.publicRole = getEnv("PUBLIC_ROLE")
-		config.validateURL = getEnv("TOKEN_SERVICE_ENDPOINT")
+		config.validateURL = fmt.Sprintf("%s/validate", getEnv("LAUNCHPAD_TOKEN_ENDPOINT"))
 		config.secretArn = getEnv("SERVICE_ACCOUNT_SECRET_ARN")
 		config.jwksURL = fmt.Sprintf(jwksURLFmt, idpHost)
 		config.issuer = fmt.Sprintf(issuerFmt, idpHost)
