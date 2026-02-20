@@ -25,6 +25,7 @@ locals {
       timeout     = 30
       memory_size = 512
       variables = {
+        LOG_LEVEL          = var.log_level
         RDS_SECRET         = aws_secretsmanager_secret.rds_admin_login.name
         RDS_PROXY_HOST     = aws_db_proxy.rds_proxy.endpoint
         CMR_ENV            = "PROD"
@@ -35,6 +36,7 @@ locals {
       timeout     = 900
       memory_size = 2048
       variables = {
+        LOG_LEVEL   = var.log_level
         QUEUE_URL = aws_sqs_queue.gap_detection_ingest_queue.url
         DEPLOY_PREFIX = var.DEPLOY_NAME
         LAUNCHPAD_PASSPHRASE_SECRET_ARN = var.launchpad_passphrase_secret_arn
@@ -47,6 +49,7 @@ locals {
       timeout     = 900
       memory_size = 1024
       variables = {
+        LOG_LEVEL         = var.log_level
         RDS_SECRET        = aws_secretsmanager_secret.rds_admin_login.name
         RDS_PROXY_HOST    = aws_db_proxy.rds_proxy.endpoint
         TOLERANCE_TABLE   = aws_dynamodb_table.tolerance_table.name
@@ -55,6 +58,7 @@ locals {
     }
     gapCreateTable = {
       variables = {
+        LOG_LEVEL      = var.log_level
         RDS_SECRET     = aws_secretsmanager_secret.rds_admin_login.name
         RDS_PROXY_HOST = aws_db_proxy.rds_proxy.endpoint
       }
@@ -62,6 +66,7 @@ locals {
     knownGap = {
       is_api_handler = true
       variables = {
+        LOG_LEVEL      = var.log_level
         RDS_SECRET     = aws_secretsmanager_secret.rds_admin_login.name
         RDS_PROXY_HOST = aws_db_proxy.rds_proxy.endpoint
       }
@@ -70,6 +75,7 @@ locals {
       is_api_handler = true
       timeout        = 900
       variables = {
+        LOG_LEVEL                        = var.log_level
         RDS_SECRET                       = aws_secretsmanager_secret.rds_admin_login.name
         RDS_PROXY_HOST                   = aws_db_proxy.rds_proxy.endpoint
         CMR_ENV                          = "PROD"
@@ -82,6 +88,7 @@ locals {
       timeout        = 30
       memory_size    = 256
       variables = {
+        LOG_LEVEL           = var.log_level
         RDS_SECRET          = aws_secretsmanager_secret.rds_admin_login.name
         RDS_PROXY_HOST      = aws_db_proxy.rds_proxy.endpoint
         CMR_ENV             = "PROD"
@@ -92,6 +99,7 @@ locals {
     getGapReport = {
       is_api_handler = true
       variables = {
+        LOG_LEVEL         = var.log_level
         GAP_REPORT_BUCKET = aws_s3_bucket.gap_report_bucket.id
       }
     }

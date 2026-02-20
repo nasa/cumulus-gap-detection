@@ -16,6 +16,20 @@ import boto3
 import requests
 from cryptography.hazmat.primitives.serialization import pkcs12, Encoding, PrivateFormat, NoEncryption
 
+# Configure logging
+logger = logging.getLogger(__name__)
+logger.setLevel(getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO))
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
+loop = asyncio.get_event_loop()
+
+## =====================================================================================
+## Helper functions
+## =====================================================================================
 def get_launchpad_token():
     """Retrieves Launchpad token using client certificate authentication."""
     s3 = boto3.client('s3')
@@ -25,9 +39,15 @@ def get_launchpad_token():
     s3_key = os.getenv("LAUNCHPAD_PFX_S3_KEY")
     token_endpoint = os.getenv("LAUNCHPAD_TOKEN_ENDPOINT")
     cert_bytes = s3.get_object(Bucket=bucket, Key=s3_key)['Body'].read()
+    logger.debug(f"Loaded cert from s3://{bucket}/{s3_key}: {len(cert_bytes)} bytes, magic={cert_bytes[:4].hex()}")
+
     secret_string = secrets.get_secret_value(SecretId=secret_arn)['SecretString']
-    passphrase = json.loads(secret_string)['launchpad_passphrase']
+    passphrase = json.loads(secret_string)['launchpad_passphrase'].strip()
+    logger.debug(f"Passphrase loaded from secret {secret_arn}: len={len(passphrase)}")
+
     private_key, certificate, _ = pkcs12.load_key_and_certificates(cert_bytes, passphrase.encode())
+    logger.debug(f"PKCS12 loaded successfully: cert subject={certificate.subject.rfc4514_string()}")
+
     cert_pem = certificate.public_bytes(Encoding.PEM)
     key_pem = private_key.private_bytes(Encoding.PEM, PrivateFormat.TraditionalOpenSSL, NoEncryption())
     
@@ -51,23 +71,6 @@ def get_launchpad_token():
         os.unlink(cert_path)
         os.unlink(key_path)
 
-
-
-# Configure logging
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-
-loop = asyncio.get_event_loop()
-
-
-## =====================================================================================
-## Helper functions
-## =====================================================================================
 def split_date_ranges(start_date, end_date, num_ranges):
     """
     Splits a date range into a specified number of equal subranges.

@@ -94,6 +94,12 @@ variable "state_machine_name_lst" {
   type        = list(string)
 }
 
+variable "log_level" {
+  type        = string
+  description = "Log verbosity"
+  default     = ""
+}
+
 variable "launchpad_passphrase_secret_arn" {
   description = "ARN of the secret containing the Launchpad passphrase"
   type        = string
@@ -156,8 +162,4 @@ variable "token_service_endpoint" {
   default     = ""
 }
 
-variable "log_level" {
-  type        = string
-  description = "Log verbosity"
-  default     = ""
-}
+
