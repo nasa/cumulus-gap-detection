@@ -25,9 +25,15 @@ def get_launchpad_token():
     s3_key = os.getenv("LAUNCHPAD_PFX_S3_KEY")
     token_endpoint = os.getenv("LAUNCHPAD_TOKEN_ENDPOINT")
     cert_bytes = s3.get_object(Bucket=bucket, Key=s3_key)['Body'].read()
+    logger.debug(f"Loaded cert from s3://{bucket}/{s3_key}: {len(cert_bytes)} bytes, magic={cert_bytes[:4].hex()}")
+
     secret_string = secrets.get_secret_value(SecretId=secret_arn)['SecretString']
     passphrase = json.loads(secret_string)['launchpad_passphrase']
+    logger.debug(f"Passphrase loaded from secret {secret_arn}: len={len(passphrase)}")
+
     private_key, certificate, _ = pkcs12.load_key_and_certificates(cert_bytes, passphrase.encode())
+    logger.debug(f"PKCS12 loaded successfully: cert subject={certificate.subject.rfc4514_string()}")
+
     cert_pem = certificate.public_bytes(Encoding.PEM)
     key_pem = private_key.private_bytes(Encoding.PEM, PrivateFormat.TraditionalOpenSSL, NoEncryption())
     
@@ -55,12 +61,14 @@ def get_launchpad_token():
 
 # Configure logging
 logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+logger.setLevel(getattr(logging, log_level, logging.INFO))
 if not logger.handlers:
     handler = logging.StreamHandler()
     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
     handler.setFormatter(formatter)
     logger.addHandler(handler)
+
 
 loop = asyncio.get_event_loop()
 
