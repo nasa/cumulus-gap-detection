@@ -37,12 +37,15 @@ def get_launchpad_token():
     secret_arn = os.getenv('LAUNCHPAD_PASSPHRASE_SECRET_ARN')
     bucket = os.getenv("LAUNCHPAD_PFX_S3_BUCKET")
     s3_key = os.getenv("LAUNCHPAD_PFX_S3_KEY")
-    token_endpoint = f"{os.getenv('LAUNCHPAD_TOKEN_ENDPOINT')}/gettoken"
+    token_endpoint = f"{os.getenv('LAUNCHPAD_TOKEN_ENDPOINT').rstrip('/')}/gettoken"
     cert_bytes = s3.get_object(Bucket=bucket, Key=s3_key)['Body'].read()
     logger.debug(f"Loaded cert from s3://{bucket}/{s3_key}: {len(cert_bytes)} bytes, magic={cert_bytes[:4].hex()}")
 
     secret_string = secrets.get_secret_value(SecretId=secret_arn)['SecretString']
-    passphrase = json.loads(secret_string)['launchpad_passphrase'].strip()
+    try:
+        passphrase = json.loads(secret_string)['launchpad_passphrase'].strip()
+    except (json.JSONDecodeError, KeyError):
+        passphrase = secret_string.strip()
     logger.debug(f"Passphrase loaded from secret {secret_arn}: len={len(passphrase)}")
 
     private_key, certificate, _ = pkcs12.load_key_and_certificates(cert_bytes, passphrase.encode())
