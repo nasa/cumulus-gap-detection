@@ -1,3 +1,4 @@
 python-cmr
 aiohttp
 aioboto3
+cryptography
