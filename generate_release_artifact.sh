@@ -9,8 +9,7 @@ echo "Packaging Lambdas and Layers..."
 rm -rf gap_detection_module/artifacts
 
 DATE=$(date +"%Y_%m_%d")
-#ZIP_NAME="gesdisc_cumulus_gap_detection_$DATE.zip"
-ZIP_NAME="gesdisc_cumulus_gap_detection_dev-latest.zip"
+ZIP_NAME="gesdisc_cumulus_gap_detection_$DATE.zip"
 
 rm -f "$ZIP_NAME"
 
