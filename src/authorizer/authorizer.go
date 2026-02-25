@@ -103,6 +103,16 @@ func initConfig() {
 	})
 }
 
+func tokenType(token string) string {
+    if strings.Count(token, ".") == 2 {
+        return "jwt"
+    }
+    if strings.ContainsAny(token, "+/=") {
+        return "sm"
+    }
+    return ""
+}
+
 // Initialize public key cache manager for re-use
 func initJWKS() error {
 	jwksOnce.Do(func() {
@@ -240,14 +250,7 @@ func validateServiceAccountToken(token string) bool {
 	return false
 }
 
-func parseToken(authHeader string) (role, userID string) {
-	// Extract bearer token
-	token := strings.TrimPrefix(authHeader, "Bearer ")
-	if token == "" || token == authHeader {
-		logger.Debug("Malformed Authorization header")
-		return "", ""
-	}
-
+func parseToken(token string) (role, userID string) {
 	n := len(token)
 	if n > 3 && token[:3] == "eyJ" && token[n-1] != '=' {
 		// Initialize JWKS
@@ -294,26 +297,23 @@ func Handler(ctx context.Context, event events.APIGatewayCustomAuthorizerRequest
 		sourceIP = event.RequestContext.Identity.SourceIP
 		logger.Warn("CloudFront-Viewer-Address header missing, falling back to Identity.SourceIP")
 	}
-	authHeader := event.Headers["Authorization"]
+
 	logger.Info("Recieved request",
 		zap.String("source_ip", sourceIP),
 		zap.String("method", event.HTTPMethod),
 		zap.String("path", event.Path),
-		zap.String("auth_source", func() string {
-			if authHeader != "" {
-				return "auth header"
-			}
-			return "ip address"
-		}()),
 	)
 
-	// Assign role from token if auth header is set
-	if authHeader != "" {
-		role, userID = parseToken(authHeader)
-		// Assign public role if source IP is whitelisted
-	} else if slices.Contains(config.authorizedHosts, sourceIP) {
-		role = config.publicRole
-		userID = sourceIP
+	isWhitelisted := slices.Contains(config.authorizedHosts, sourceIP)
+	token := strings.TrimPrefix(event.Headers["Authorization"], "Bearer ")
+
+	// Validate for admin if jwt or public if sm and not whitelisted
+	if tt := tokenType(token); tt == "jwt" || (tt == "sm" && !isWhitelisted) {
+	    role, userID = parseToken(token)
+	}
+	if role == "" && isWhitelisted {
+	    role = config.publicRole
+	    userID = sourceIP
 	}
 
 	// Allow all admin requests
