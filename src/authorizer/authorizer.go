@@ -290,6 +290,7 @@ func Handler(ctx context.Context, event events.APIGatewayCustomAuthorizerRequest
 	var role, userID string
 	sourceIP := event.RequestContext.Identity.SourceIP
 	authHeader := event.Headers["Authorization"]
+	logger.Debug("Incoming headers", zap.Any("headers", event.Headers))
 
 	logger.Info("Recieved request",
 		zap.String("source_ip", sourceIP),
