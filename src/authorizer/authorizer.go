@@ -287,11 +287,14 @@ func parseToken(authHeader string) (role, userID string) {
 
 func Handler(ctx context.Context, event events.APIGatewayCustomAuthorizerRequestTypeRequest) (events.APIGatewayCustomAuthorizerResponse, error) {
 	initConfig()
+	logger.Debug("Received event", zap.Any("event", event))
 	var role, userID string
-	sourceIP := event.RequestContext.Identity.SourceIP
+	sourceIP, _, _ := strings.Cut(event.Headers["CloudFront-Viewer-Address"], ":")
+	if sourceIP == "" {
+		sourceIP = event.RequestContext.Identity.SourceIP
+		logger.Warn("CloudFront-Viewer-Address header missing, falling back to Identity.SourceIP")
+	}
 	authHeader := event.Headers["Authorization"]
-	logger.Debug("Incoming headers", zap.Any("headers", event.Headers))
-
 	logger.Info("Recieved request",
 		zap.String("source_ip", sourceIP),
 		zap.String("method", event.HTTPMethod),
