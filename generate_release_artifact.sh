@@ -10,7 +10,7 @@ rm -rf gap_detection_module/artifacts
 
 DATE=$(date +"%Y_%m_%d")
 #ZIP_NAME="gesdisc_cumulus_gap_detection_$DATE.zip"
-ZIP_NAME="gesdisc_cumulus_gap_detection_latest.zip"
+ZIP_NAME="gesdisc_cumulus_gap_detection-latest.zip"
 
 rm -f "$ZIP_NAME"
 
