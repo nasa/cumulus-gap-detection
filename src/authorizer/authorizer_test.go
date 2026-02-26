@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/zap"
 	"github.com/MicahParks/keyfunc/v2"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/golang-jwt/jwt/v5"
@@ -81,6 +82,7 @@ func TestMain(m *testing.M) {
 	authConfig.authorizedHosts = []string{"999.999.999.999"}
 	authConfig.validateURL = "https://token-service.example.internal/validate"
 	authConfig.secretArn = "arn:aws:secretsmanager:us-west-2:123456789012:secret:test-sa-cert"
+	logger = zap.NewNop()
 
 	os.Exit(m.Run())
 }
