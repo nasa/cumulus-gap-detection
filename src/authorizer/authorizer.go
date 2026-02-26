@@ -25,8 +25,8 @@ import (
 )
 
 type Keys struct {
-	jwks      *keyfunc.JWKS
-	saCert    *tls.Certificate
+	jwks   *keyfunc.JWKS
+	saCert *tls.Certificate
 }
 
 const (
@@ -35,7 +35,7 @@ const (
 )
 
 var (
-	logger        *zap.Logger
+	logger *zap.Logger
 
 	authConfig struct {
 		jwksURL         string
@@ -157,7 +157,7 @@ func loadServiceAccountCert() *tls.Certificate {
 	svc := secretsmanager.New(sess)
 
 	result, err := svc.GetSecretValue(&secretsmanager.GetSecretValueInput{
-		SecretId: aws.String( authConfig.secretArn),
+		SecretId: aws.String(authConfig.secretArn),
 	})
 	if err != nil {
 		logger.Fatal("Failed to retrieve service account secret",
@@ -184,7 +184,7 @@ func loadServiceAccountCert() *tls.Certificate {
 	return &cert
 }
 
-func(k *Keys) validateServiceAccountToken(token string) bool {
+func (k *Keys) validateServiceAccountToken(token string) bool {
 	logger.Debug("SM_VALIDATE: Starting service account token validation",
 		zap.String("token_prefix", token[:min(10, len(token))]),
 		zap.Int("token_length", len(token)))
@@ -239,7 +239,7 @@ func(k *Keys) validateServiceAccountToken(token string) bool {
 	return false
 }
 
-func(k *Keys) parseToken(ctx context.Context, token, tokenType string) (role, userID string) {
+func (k *Keys) parseToken(ctx context.Context, token, tokenType string) (role, userID string) {
 	switch tokenType {
 	case "jwt":
 		if k.jwks == nil {
@@ -261,7 +261,7 @@ func(k *Keys) parseToken(ctx context.Context, token, tokenType string) (role, us
 			return role, userID
 		}
 		logger.Info("Invalid JWT", zap.Error(err))
-		
+
 	case "sm":
 		if k.validateServiceAccountToken(token) {
 			return authConfig.publicRole, "Service Account"
@@ -271,7 +271,7 @@ func(k *Keys) parseToken(ctx context.Context, token, tokenType string) (role, us
 	return "", ""
 }
 
-func(k *Keys) Handler(ctx context.Context, event events.APIGatewayCustomAuthorizerRequestTypeRequest) (events.APIGatewayCustomAuthorizerResponse, error) {
+func (k *Keys) Handler(ctx context.Context, event events.APIGatewayCustomAuthorizerRequestTypeRequest) (events.APIGatewayCustomAuthorizerResponse, error) {
 	logger.Debug("Received event", zap.Any("event", event))
 	var role, userID string
 	sourceIP, _, _ := strings.Cut(event.Headers["CloudFront-Viewer-Address"], ":")
@@ -291,11 +291,11 @@ func(k *Keys) Handler(ctx context.Context, event events.APIGatewayCustomAuthoriz
 
 	// Validate for admin if jwt or public if sm and not whitelisted
 	if tt := getTokenType(token); tt == "jwt" || (tt == "sm" && !isWhitelisted) {
-	    role, userID = k.parseToken(ctx, token, tt)
+		role, userID = k.parseToken(ctx, token, tt)
 	}
 	if role == "" && isWhitelisted {
-	    role = authConfig.publicRole
-	    userID = sourceIP
+		role = authConfig.publicRole
+		userID = sourceIP
 	}
 
 	// Allow all admin requests
