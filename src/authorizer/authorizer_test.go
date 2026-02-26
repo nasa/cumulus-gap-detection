@@ -8,10 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
-	"net/http/httptest"
 	"os"
 	"reflect"
-	"sync"
 	"testing"
 	"time"
 
@@ -29,7 +27,7 @@ const (
 var (
 	testPrivateKey *rsa.PrivateKey
 	testPublicKey  *rsa.PublicKey
-	jwksServer     *httptest.Server
+	testJWKS       *keyfunc.JWKS
 	adminRole      string
 	publicRole     string
 	testIssuer     string
@@ -42,10 +40,11 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	testPublicKey = &testPrivateKey.PublicKey
-	jwks, err = keyfunc.NewJSON(json.RawMessage(fmt.Sprintf(`{
+
+	testJWKS, err = keyfunc.NewJSON(json.RawMessage(fmt.Sprintf(`{
 		"keys": [{
 			"kty": "RSA",
-			"alg": "RS256", 
+			"alg": "RS256",
 			"kid": "test-key",
 			"use": "sig",
 			"n": "%s",
@@ -58,8 +57,7 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	jwksErr = nil
-	jwksOnce.Do(func() {})
+
 	testHost := "example.idp.org"
 	os.Setenv("IDP_HOST", testHost)
 	os.Setenv("AUDIENCE", testAudience)
@@ -70,12 +68,14 @@ func TestMain(m *testing.M) {
 	adminRole = os.Getenv("ADMIN_ROLE")
 	publicRole = os.Getenv("PUBLIC_ROLE")
 
-	config.adminRole = "admin"
-	config.publicRole = "public"
+	authConfig.adminRole = "admin"
+	authConfig.publicRole = "public"
+	authConfig.audience = testAudience
 	testIssuer = fmt.Sprintf(issuerFmt, testHost)
+	authConfig.issuer = testIssuer
+	authConfig.authorizedHosts = []string{"999.999.999.999"}
 
-	code := m.Run()
-	os.Exit(code)
+	os.Exit(m.Run())
 }
 
 func createToken(claims jwt.MapClaims) string {
@@ -97,6 +97,10 @@ func createToken(claims jwt.MapClaims) string {
 		panic(err)
 	}
 	return signed
+}
+
+func newTestKeys() *Keys {
+	return &Keys{jwks: testJWKS}
 }
 
 func TestGeneratePolicy(t *testing.T) {
@@ -176,60 +180,13 @@ func TestGeneratePolicy(t *testing.T) {
 	}
 }
 
-func TestHandler_InitJWKSFailure(t *testing.T) {
-	originalHost := os.Getenv("IDP_HOST")
-	os.Setenv("IDP_HOST", "bad host")
-
-	jwks = nil
-	jwksOnce = sync.Once{}
-	configOnce = sync.Once{}
-
-	defer func() {
-		os.Setenv("IDP_HOST", originalHost)
-		configOnce = sync.Once{}
-		var err error
-		jwks, err = keyfunc.NewJSON(json.RawMessage(fmt.Sprintf(`{
-			"keys": [{
-				"kty": "RSA",
-				"alg": "RS256", 
-				"kid": "test-key",
-				"use": "sig",
-				"n": "%s",
-				"e": "%s"
-			}]
-		}`,
-			base64.RawURLEncoding.EncodeToString(testPublicKey.N.Bytes()),
-			base64.RawURLEncoding.EncodeToString(big.NewInt(int64(testPublicKey.E)).Bytes()),
-		)))
-		if err != nil {
-			panic(err)
-		}
-		jwksErr = nil
-		jwksOnce.Do(func() {})
-	}()
-
-	resp, err := Handler(context.Background(), events.APIGatewayCustomAuthorizerRequestTypeRequest{
-		MethodArn:  testMethodArn,
-		HTTPMethod: "GET",
-		Path:       "/getTimeGaps",
-		Headers:    map[string]string{"Authorization": "Bearer " + createToken(jwt.MapClaims{authorizationClaim: publicRole})},
-	})
-
-	if err == nil {
-		t.Fatal("expected error from initJWKS failure")
-	}
-
-	if resp.PolicyDocument.Statement[0].Effect != "Deny" {
-		t.Errorf("expected Deny on JWKS failure, got %s", resp.PolicyDocument.Statement[0].Effect)
-	}
-}
-
 func TestHandler(t *testing.T) {
 	tests := []struct {
 		name       string
 		headers    map[string]string
 		httpMethod string
 		path       string
+		sourceIP   string
 		wantEffect string
 	}{
 		{
@@ -302,11 +259,25 @@ func TestHandler(t *testing.T) {
 			path:       "/getTimeGaps",
 			wantEffect: "Deny",
 		},
+		{
+			name:       "whitelisted IP no token GET",
+			headers:    map[string]string{"CloudFront-Viewer-Address": "999.999.999.999:12345"},
+			httpMethod: "GET",
+			path:       "/getTimeGaps",
+			wantEffect: "Allow",
+		},
+		{
+			name:       "whitelisted IP no token POST",
+			headers:    map[string]string{"CloudFront-Viewer-Address": "999.999.999.999:12345"},
+			httpMethod: "POST",
+			path:       "/gapConfig",
+			wantEffect: "Deny",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resp, err := Handler(context.Background(), events.APIGatewayCustomAuthorizerRequestTypeRequest{
+			resp, err := newTestKeys().Handler(context.Background(), events.APIGatewayCustomAuthorizerRequestTypeRequest{
 				MethodArn:  testMethodArn,
 				HTTPMethod: tt.httpMethod,
 				Path:       tt.path,
