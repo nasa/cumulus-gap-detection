@@ -53,17 +53,17 @@ var (
 
 func init() {
 	var err error
-	config := zap.NewProductionConfig()
+	zapCfg := zap.NewProductionConfig()
 
 	// Default to info, override with LOG_LEVEL env var
 	if logLevel := os.Getenv("LOG_LEVEL"); logLevel != "" {
 		var level zapcore.Level
 		if err := level.UnmarshalText([]byte(logLevel)); err == nil {
-			config.Level = zap.NewAtomicLevelAt(level)
+			zapCfg.Level = zap.NewAtomicLevelAt(level)
 		}
 	}
 
-	logger, err = config.Build()
+	logger, err = zapCfg.Build()
 	if err != nil {
 		panic(err)
 	}
@@ -103,14 +103,14 @@ func initConfig() {
 	})
 }
 
-func tokenType(token string) string {
-    if strings.Count(token, ".") == 2 {
-        return "jwt"
-    }
-    if strings.ContainsAny(token, "+/=") {
-        return "sm"
-    }
-    return ""
+func getTokenType(token string) string {
+	if len(token) > 3 && token[:3] == "eyJ" && strings.Count(token, ".") == 2 && token[len(token)-1] != '=' {
+		return "jwt"
+	}
+	if token != "" {
+		return "sm"
+	}
+	return ""
 }
 
 // Initialize public key cache manager for re-use
@@ -250,10 +250,9 @@ func validateServiceAccountToken(token string) bool {
 	return false
 }
 
-func parseToken(token string) (role, userID string) {
-	n := len(token)
-	if n > 3 && token[:3] == "eyJ" && token[n-1] != '=' {
-		// Initialize JWKS
+func parseToken(token, tokenType string) (role, userID string) {
+	switch tokenType {
+	case "jwt":
 		if err := initJWKS(); err != nil {
 			logger.Error("JWKS initialization failed",
 				zap.Error(err),
@@ -277,14 +276,13 @@ func parseToken(token string) (role, userID string) {
 			}
 			logger.Info("Invalid JWT", zap.Error(err))
 		}
-	} else {
-
+	case "sm":
 		logger.Debug("Detected SM token")
 		if validateServiceAccountToken(token) {
 			return config.publicRole, "Service Account"
 		}
-	}
 
+	}
 	return "", ""
 }
 
@@ -308,8 +306,8 @@ func Handler(ctx context.Context, event events.APIGatewayCustomAuthorizerRequest
 	token := strings.TrimPrefix(event.Headers["Authorization"], "Bearer ")
 
 	// Validate for admin if jwt or public if sm and not whitelisted
-	if tt := tokenType(token); tt == "jwt" || (tt == "sm" && !isWhitelisted) {
-	    role, userID = parseToken(token)
+	if tt := getTokenType(token); tt == "jwt" || (tt == "sm" && !isWhitelisted) {
+	    role, userID = parseToken(token, tt)
 	}
 	if role == "" && isWhitelisted {
 	    role = config.publicRole
