@@ -31,6 +31,17 @@ var (
 	adminRole      string
 	publicRole     string
 	testIssuer     string
+
+	_ = func() bool {
+		os.Setenv("IDP_HOST", "example.idp.org")
+		os.Setenv("AUDIENCE", testAudience)
+		os.Setenv("ADMIN_ROLE", "admin")
+		os.Setenv("PUBLIC_ROLE", "public")
+		os.Setenv("AUTHORIZED_HOSTS", "999.999.999.999")
+		os.Setenv("TOKEN_SERVICE_ENDPOINT", "https://token-service.example.internal")
+		os.Setenv("SERVICE_ACCOUNT_SECRET_ARN", "arn:aws:secretsmanager:us-west-2:123456789012:secret:test-sa-cert")
+		return true
+	}()
 )
 
 func TestMain(m *testing.M) {
@@ -41,6 +52,7 @@ func TestMain(m *testing.M) {
 	}
 	testPublicKey = &testPrivateKey.PublicKey
 
+	testHost := "example.idp.org"
 	testJWKS, err = keyfunc.NewJSON(json.RawMessage(fmt.Sprintf(`{
 		"keys": [{
 			"kty": "RSA",
@@ -58,13 +70,6 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
-	testHost := "example.idp.org"
-	os.Setenv("IDP_HOST", testHost)
-	os.Setenv("AUDIENCE", testAudience)
-	os.Setenv("ADMIN_ROLE", "admin")
-	os.Setenv("PUBLIC_ROLE", "public")
-	os.Setenv("AUTHORIZED_HOSTS", "999.999.999.999")
-
 	adminRole = os.Getenv("ADMIN_ROLE")
 	publicRole = os.Getenv("PUBLIC_ROLE")
 
@@ -74,6 +79,8 @@ func TestMain(m *testing.M) {
 	testIssuer = fmt.Sprintf(issuerFmt, testHost)
 	authConfig.issuer = testIssuer
 	authConfig.authorizedHosts = []string{"999.999.999.999"}
+	authConfig.validateURL = "https://token-service.example.internal/validate"
+	authConfig.secretArn = "arn:aws:secretsmanager:us-west-2:123456789012:secret:test-sa-cert"
 
 	os.Exit(m.Run())
 }
