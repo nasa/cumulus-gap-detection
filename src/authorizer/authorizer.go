@@ -11,7 +11,6 @@ import (
 	"os"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/MicahParks/keyfunc/v2"
@@ -50,57 +49,46 @@ var (
 	}
 )
 
-var configOnce sync.Once
-
 func init() {
-	var err error
 	zapCfg := zap.NewProductionConfig()
-
-	// Default to info, override with LOG_LEVEL env var
 	if logLevel := os.Getenv("LOG_LEVEL"); logLevel != "" {
 		var level zapcore.Level
 		if err := level.UnmarshalText([]byte(logLevel)); err == nil {
 			zapCfg.Level = zap.NewAtomicLevelAt(level)
 		}
 	}
-
+	var err error
 	logger, err = zapCfg.Build()
 	if err != nil {
 		panic(err)
 	}
-}
 
-
-func initConfig() {
-	configOnce.Do(func() {
-		getEnv := func(k string) string {
-			v := os.Getenv(k)
-			if v == "" {
-				logger.Fatal("INIT: Required variable not found in environment",
-					zap.String("required", k))
-			}
-			return v
+	getEnv := func(k string) string {
+		v := os.Getenv(k)
+		if v == "" {
+			logger.Fatal("INIT: Required variable not found in environment",
+				zap.String("required", k))
 		}
-		// Set backend authConfig from environment variables
-		idpHost := getEnv("IDP_HOST")
-		authorizedHosts := os.Getenv("AUTHORIZED_HOSTS")
-		authConfig.audience = getEnv("AUDIENCE")
-		authConfig.adminRole = getEnv("ADMIN_ROLE")
-		authConfig.publicRole = getEnv("PUBLIC_ROLE")
-		authConfig.validateURL = fmt.Sprintf("%s/validate", strings.TrimRight(getEnv("TOKEN_SERVICE_ENDPOINT"), "/"))
-		authConfig.secretArn = getEnv("SERVICE_ACCOUNT_SECRET_ARN")
-		authConfig.jwksURL = fmt.Sprintf(jwksURLFmt, idpHost)
-		authConfig.issuer = fmt.Sprintf(issuerFmt, idpHost)
+		return v
+	}
 
-		// Parse IP addresses from whitelist env var
-		if authorizedHosts != "" {
-			authConfig.authorizedHosts = strings.Split(authorizedHosts, ",")
-			for i := range authConfig.authorizedHosts {
-				 authConfig.authorizedHosts[i] = strings.TrimSpace(authConfig.authorizedHosts[i])
-			}
+	idpHost := getEnv("IDP_HOST")
+	authorizedHosts := os.Getenv("AUTHORIZED_HOSTS")
+	authConfig.audience = getEnv("AUDIENCE")
+	authConfig.adminRole = getEnv("ADMIN_ROLE")
+	authConfig.publicRole = getEnv("PUBLIC_ROLE")
+	authConfig.validateURL = fmt.Sprintf("%s/validate", strings.TrimRight(getEnv("TOKEN_SERVICE_ENDPOINT"), "/"))
+	authConfig.secretArn = getEnv("SERVICE_ACCOUNT_SECRET_ARN")
+	authConfig.jwksURL = fmt.Sprintf(jwksURLFmt, idpHost)
+	authConfig.issuer = fmt.Sprintf(issuerFmt, idpHost)
+
+	if authorizedHosts != "" {
+		authConfig.authorizedHosts = strings.Split(authorizedHosts, ",")
+		for i := range authConfig.authorizedHosts {
+			authConfig.authorizedHosts[i] = strings.TrimSpace(authConfig.authorizedHosts[i])
 		}
-		logger.Debug("INIT: Authorized read-only hosts", zap.Strings("ips", authConfig.authorizedHosts))
-	})
+	}
+	logger.Debug("INIT: Authorized read-only hosts", zap.Strings("hosts", authConfig.authorizedHosts))
 }
 
 func getTokenType(token string) string {
@@ -325,7 +313,5 @@ func(k *Keys) Handler(ctx context.Context, event events.APIGatewayCustomAuthoriz
 }
 
 func main() {
-	defer logger.Sync()
-	initConfig()
 	lambda.Start((&Keys{}).Handler)
 }
