@@ -36,13 +36,7 @@ const (
 )
 
 var (
-	//jwks          *keyfunc.JWKS
-	//jwksOnce      sync.Once
-	//jwksErr       error
 	logger        *zap.Logger
-	//certCache     *tls.Certificate
-	//certCacheOnce sync.Once
-	//certCacheErr  error
 
 	authConfig struct {
 		jwksURL         string
@@ -111,11 +105,14 @@ func initConfig() {
 
 func getTokenType(token string) string {
 	if len(token) > 3 && token[:3] == "eyJ" && strings.Count(token, ".") == 2 && token[len(token)-1] != '=' {
+		logger.Debug("GetTokenType: Detected JWT")
 		return "jwt"
 	}
-	if token != "" {
+	if strings.ContainsAny(token, "+/=") {
+		logger.Debug("GetTokenType: Detected SM")
 		return "sm"
 	}
+	logger.Debug("GetTokenType: No token type detected")
 	return ""
 }
 
@@ -165,7 +162,6 @@ func generatePolicy(effect, message, userID, role string, event events.APIGatewa
 }
 
 func loadServiceAccountCert() *tls.Certificate {
-	//certCacheOnce.Do(func() {
 	logger.Debug("SA_CERT: Loading service account certificate from Secrets Manager",
 		zap.String("secret_arn", authConfig.secretArn))
 
@@ -198,7 +194,6 @@ func loadServiceAccountCert() *tls.Certificate {
 	}
 
 	return &cert
-	//return certCache, certCacheErr
 }
 
 func(k *Keys) validateServiceAccountToken(token string) bool {
@@ -208,9 +203,6 @@ func(k *Keys) validateServiceAccountToken(token string) bool {
 	if k.saCert == nil {
 		k.saCert = loadServiceAccountCert()
 	}
-	//if err != nil {
-	//	logger.Error("Failed to load service account cert", zap.Error(err))
-	//} else {
 	logger.Debug("SM_VALIDATE: Certificate loaded successfully, creating HTTP client")
 
 	client := &http.Client{
@@ -256,7 +248,6 @@ func(k *Keys) validateServiceAccountToken(token string) bool {
 			}
 		}
 	}
-	//}
 	return false
 }
 
@@ -284,7 +275,6 @@ func(k *Keys) parseToken(ctx context.Context, token, tokenType string) (role, us
 		logger.Info("Invalid JWT", zap.Error(err))
 		
 	case "sm":
-		logger.Debug("Detected SM token")
 		if k.validateServiceAccountToken(token) {
 			return authConfig.publicRole, "Service Account"
 		}
