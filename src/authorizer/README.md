@@ -4,8 +4,11 @@ This is a Go module implementing a Lambda function for AWS API Gateway's Lambda 
 
 ## Structure
 authroizer.go: The source code of the Lambda Authorizer, including the handler and authorization logic.
+
 go.mod: The dependencies required for the authorizer.
-go.sum: The hashes of each dependency that are verfied at build time before the binary is built
+
+go.sum: The hashes of each dependency that are verfied at build time before the binary is built. Generated from go.mod automatically
+
 authroizer_test.go: Unit tests for the authorizer. Tests can be run with $ go test from the module root.
 
 ## Authorization Logic
