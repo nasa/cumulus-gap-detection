@@ -21,7 +21,6 @@ module "gesdisc-cumulus-gap-detection" {
   # List of state machine names used to construct prefixes for sns subcription filter policies
    state_machine_name_lst = [data.aws_sfn_state_machine.component_metadata_state_machine.name , data.aws_sfn_state_machine.component_cmr_state_machine.name] 
 
-
    
    // Optional parameters
    db_admin_username = "postgres" # Defaults to postgres
@@ -32,6 +31,15 @@ module "gesdisc-cumulus-gap-detection" {
    snapshot_identifier = var.snapshot_identifier # Defaults to null but can be used to create the cluster from a snapshot. Please use this cautiously. 
    sqs_trigger_process_gaps_batch_size = var.sqs_trigger_process_gaps_batch_size # Defaults to 10000
    sqs_trigger_max_batch_window = var.sqs_trigger_max_batch_window # Defaults to 10 
+   log_level                           = var.log_level          # Verbosity of logging, applied globally to all Lambda functions, but currently only used by the authorizer.
+
+   // API Gateway Authorizer configuration
+   enable_authorizer                   = var.enable_authorizer  # If true, all API routes will require authorization. Authroizer will not be deployed if false.
+   idp_host                            = var.idp_host           # The base URL of the Identity Provider to be used for authentication
+   audience                            = var.audience           # The expected audience for OAuth2 access tokens
+   admin_role                          = var.admin_role         # The value of the group claim in the access token that grants admin authorization (allowing POST methods)
+   public_role                         = var.public_role        # The value of the group claim in the access token that grants public authorization, required for any request
+   authorized_hosts                    = var.authorized_hosts   # List of IP addresses from which all requests are granted public authorization without authentication
 }
 ```
 
