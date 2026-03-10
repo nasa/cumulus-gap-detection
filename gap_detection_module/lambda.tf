@@ -157,6 +157,22 @@ resource "aws_iam_role_policy" "lambda_rds_secret_policy" {
   })
 }
 
+resource "aws_iam_role_policy" "lambda_service_account_secret_policy" {
+  count = var.enable_authorizer ? 1 : 0
+  name  = "${var.DEPLOY_NAME}-gap-detection-service-account-secret-policy"
+  role  = var.lambda_processing_role_name
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = ["secretsmanager:GetSecretValue"]
+        Resource = aws_secretsmanager_secret.service_account_cert.arn
+      }
+    ]
+  })
+}
+
 # Allow lambda security group to connect to RDS proxy
 resource "aws_security_group_rule" "lambda_to_proxy" {
   type                     = "egress"
@@ -176,4 +192,29 @@ resource "aws_lambda_permission" "api_gateway_permissions" {
   function_name = aws_lambda_function.gap_functions[each.key].function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/*/${each.key}"
+}
+
+resource "aws_lambda_function" "authorizer" {
+  count            = var.enable_authorizer ? 1 : 0 
+  function_name    = "${var.DEPLOY_NAME}-gapAuthorizer"
+  filename         = "${path.module}/artifacts/functions/authorizer.zip"
+  source_code_hash = filebase64sha256("${path.module}/artifacts/functions/authorizer.zip")
+  role             = var.lambda_processing_role_arn
+  runtime          = "provided.al2023"
+  handler          = "bootstrap"
+  architectures    = ["arm64"]
+  timeout          = 30
+  
+  environment {
+    variables = {
+      LOG_LEVEL   = var.log_level
+      IDP_HOST    = var.idp_host
+      AUDIENCE    = var.audience
+      ADMIN_ROLE  = var.admin_role
+      PUBLIC_ROLE = var.public_role
+      AUTHORIZED_HOSTS = join(",", var.authorized_hosts)
+      TOKEN_SERVICE_ENDPOINT = var.launchpad_token_endpoint
+      SERVICE_ACCOUNT_SECRET_ARN = aws_secretsmanager_secret.service_account_cert.arn
+    }
+  }
 }

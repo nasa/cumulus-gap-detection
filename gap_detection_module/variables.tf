@@ -5,7 +5,7 @@ variable "DEPLOY_NAME" {
 
 variable "engine_version" {
   description = "Postgres engine version for cluster"
-  default     = "15.4"
+  default     = "15.12"
   type        = string
 }
 
@@ -26,8 +26,6 @@ variable "deletion_protection" {
   type        = bool
   default     = true
 }
-
-
 
 variable "snapshot_identifier" {
   description = "Snapshot identifer to create/restore database from a snapshot"
@@ -157,11 +155,3 @@ variable "authorized_hosts" {
   description = "List of IP addresses of hosts that have read-only authorization without authentication"
   default     = []
 }
-
-variable "token_service_endpoint" {
-  type        = string
-  description = "URL of the Launchpad Token Service"
-  default     = ""
-}
-
-

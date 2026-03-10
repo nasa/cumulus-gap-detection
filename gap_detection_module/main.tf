@@ -15,13 +15,10 @@ locals {
   account_id    = data.aws_caller_identity.current.account_id
   base_url      = "https://console.aws.amazon.com/states/home"
   execution_url = "${local.base_url}?region=${local.region}#/executions/details"
-
   state_machines = var.state_machine_name_lst
-
   execution_prefix_lst = [
           for name in local.state_machines :
           "${local.execution_url}/arn:aws:states:${local.region}:${local.account_id}:execution:${name}"
-
         ]
   gap_functions = {
     gapUpdate = {
@@ -122,9 +119,13 @@ locals {
 
   openapi_template_vars = {
     DEPLOY_NAME = var.DEPLOY_NAME
+    enable_authorizer  = var.enable_authorizer
+    authorizer_arn     = var.enable_authorizer ? aws_lambda_function.authorizer[0].arn : ""
+    region = local.region
     lambda_invoke_arns = {
       for func_name in local.api_functions :
       func_name => aws_lambda_function.gap_functions[func_name].invoke_arn
     }
   }
+
 }

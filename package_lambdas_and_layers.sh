@@ -9,10 +9,19 @@ docker build -f Dockerfile -t lambda-packager .
 for lambda_path in $LAMBDAS_DIR/*/ ; do
     module_name=$(basename $lambda_path)
     echo -e "\n================================= Packaging $module_name\t================================= "
-    docker run --rm \
-      -v $(pwd)/$lambda_path:/app/lambda \
-      -v $(pwd)/artifacts/:/artifacts/ \
-      lambda-packager $module_name /app/lambda
+
+    if [ -f "$lambda_path/go.mod" ]; then
+        (cd $lambda_path && \
+         GOOS=linux GOARCH=arm64 \
+         go build -ldflags="-s -w" -o bootstrap .)
+        (cd $lambda_path && zip $ROOT_DIR/artifacts/functions/${module_name}.zip bootstrap)
+        rm $lambda_path/bootstrap
+    else
+        docker run --rm \
+          -v $(pwd)/$lambda_path:/app/lambda \
+          -v $(pwd)/artifacts/:/artifacts/ \
+          lambda-packager $module_name /app/lambda
+    fi
 done
 rm src/gapCreateTable/gap_schema.sql
 

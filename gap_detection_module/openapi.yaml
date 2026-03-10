@@ -3,9 +3,38 @@ info:
   title: "${DEPLOY_NAME}-TemporalGapAPI"
   description: "Temporal Gap API"
   version: "1.0.0"
+%{ if enable_authorizer ~}
+components:
+  securitySchemes:
+    AdminAuthorizer:
+      type: apiKey
+      name: Authorization
+      in: header
+      x-amazon-apigateway-authtype: custom
+      x-amazon-apigateway-authorizer:
+        type: request
+        authorizerUri: "arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${authorizer_arn}/invocations"
+        authorizerResultTtlInSeconds: 3600
+        identitySource: "method.request.header.Authorization"
+    
+    PublicAuthorizer:
+      type: apiKey
+      name: Authorization
+      in: header
+      x-amazon-apigateway-authtype: custom
+      x-amazon-apigateway-authorizer:
+        type: request
+        authorizerUri: "arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${authorizer_arn}/invocations"
+        authorizerResultTtlInSeconds: 3600
+        identitySource: "method.request.header.Authorization"
+%{ endif ~}
 paths:
   /gapConfig:
     post:
+%{ if enable_authorizer ~}
+      security:
+        - AdminAuthorizer: []
+%{ endif ~}
       x-amazon-apigateway-integration:
         uri: "${lambda_invoke_arns.gapConfig}"
         httpMethod: "POST"
@@ -15,6 +44,10 @@ paths:
           description: "200 response"
   /getTimeGaps:
     get:
+%{ if enable_authorizer ~}
+      security:
+        - PublicAuthorizer: []
+%{ endif ~}
       parameters:
         - name: "short_name"
           in: "query"
@@ -62,6 +95,10 @@ paths:
           description: "200 response"
   /knownGap:
     get:
+%{ if enable_authorizer ~}
+      security:
+        - PublicAuthorizer: []
+%{ endif ~}
       parameters:
         - name: "short_name"
           in: "query"
@@ -91,6 +128,10 @@ paths:
         "200":
           description: "200 response"
     post:
+%{ if enable_authorizer ~}
+      security:
+        - AdminAuthorizer: []
+%{ endif ~}
       x-amazon-apigateway-integration:
         uri: "${lambda_invoke_arns.knownGap}"
         httpMethod: "POST"
@@ -100,6 +141,10 @@ paths:
           description: "200 response"
   /getGapReport:
     get:
+%{ if enable_authorizer ~}
+      security:
+        - PublicAuthorizer: []
+%{ endif ~}
       parameters:
         - name: "short_name"
           in: "query"

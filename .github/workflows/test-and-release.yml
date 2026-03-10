@@ -23,6 +23,18 @@ jobs:
           chmod +x ~/.docker/cli-plugins/docker-compose
       - name: Run tests
         run: test/test.sh
+  authorizer-unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: src/authorizer/go.mod
+      - name: Run authorizer unit tests
+        working-directory: src/authorizer
+        run: go test -v -cover
   generate-release-artifact:
     if: contains(github.ref, '/tags/v')
     runs-on: ubuntu-latest
