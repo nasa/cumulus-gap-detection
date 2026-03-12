@@ -145,7 +145,7 @@ func TestGeneratePolicy(t *testing.T) {
 					Statement: []events.IAMPolicyStatement{{
 						Action:   []string{"execute-api:Invoke"},
 						Effect:   "Allow",
-						Resource: []string{testMethodArn},
+     					Resource: []string{"*"},
 					}},
 				},
 			},

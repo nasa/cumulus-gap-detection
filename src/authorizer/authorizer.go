@@ -125,17 +125,15 @@ func initJWKS() *keyfunc.JWKS {
 
 // Generate resource policy for a given resource and effect (ie. Allow or Deny)
 func generatePolicy(effect, message, userID, role string, event events.APIGatewayCustomAuthorizerRequestTypeRequest) events.APIGatewayCustomAuthorizerResponse {
+	sourceIP, _, _ := strings.Cut(event.Headers["CloudFront-Viewer-Address"], ":")
 	logger.Info(message,
 		zap.String("effect", effect),
 		zap.String("user", userID),
 		zap.String("role", role),
-		zap.String("source_ip", event.RequestContext.Identity.SourceIP),
+		zap.String("source_ip", sourceIP),
 		zap.String("method", event.HTTPMethod),
 		zap.String("path", event.Path),
 	)
-	//if effect == "Deny" {
-	//	event.MethodArn = "*"
-	//}
 	return events.APIGatewayCustomAuthorizerResponse{
 		PrincipalID: "user",
 		PolicyDocument: events.APIGatewayCustomAuthorizerPolicy{
@@ -143,7 +141,6 @@ func generatePolicy(effect, message, userID, role string, event events.APIGatewa
 			Statement: []events.IAMPolicyStatement{{
 				Action:   []string{"execute-api:Invoke"},
 				Effect:   effect,
-				//Resource: []string{event.MethodArn},
 				Resource: []string{"*"},
 			}},
 		},
