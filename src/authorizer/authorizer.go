@@ -133,9 +133,9 @@ func generatePolicy(effect, message, userID, role string, event events.APIGatewa
 		zap.String("method", event.HTTPMethod),
 		zap.String("path", event.Path),
 	)
-	if effect == "Deny" {
-		event.MethodArn = "*"
-	}
+	//if effect == "Deny" {
+	//	event.MethodArn = "*"
+	//}
 	return events.APIGatewayCustomAuthorizerResponse{
 		PrincipalID: "user",
 		PolicyDocument: events.APIGatewayCustomAuthorizerPolicy{
@@ -143,7 +143,8 @@ func generatePolicy(effect, message, userID, role string, event events.APIGatewa
 			Statement: []events.IAMPolicyStatement{{
 				Action:   []string{"execute-api:Invoke"},
 				Effect:   effect,
-				Resource: []string{event.MethodArn},
+				//Resource: []string{event.MethodArn},
+				Resource: []string{"*"},
 			}},
 		},
 	}
