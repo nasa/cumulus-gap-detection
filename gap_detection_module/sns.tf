@@ -48,7 +48,7 @@ resource "aws_sns_topic_subscription" "report_granules_ingest_subscription" {
   topic_arn = var.report_granules_topic_arn
   protocol = "sqs"
   endpoint = aws_sqs_queue.gap_detection_ingest_queue.arn
-  filter_policy = jsonencode({
+  filter_policy = jsonencode(merge({
     "record.status" = [
       "completed"
     ],
@@ -64,6 +64,12 @@ resource "aws_sns_topic_subscription" "report_granules_ingest_subscription" {
         prefix = prefix
       }
     ]
-  })
+  },
+    length(var.excluded_collection_id_prefixes) > 0 ? {
+      "record.collectionId" = [
+        { "anything-but" = { prefix = var.excluded_collection_id_prefixes[0] } }
+      ]
+    } : {}
+  ))
   filter_policy_scope = "MessageBody"
 }
