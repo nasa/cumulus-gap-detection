@@ -155,3 +155,9 @@ variable "authorized_hosts" {
   description = "List of IP addresses of hosts that have read-only authorization without authentication"
   default     = []
 }
+
+variable "excluded_collection_id_prefixes" {
+  type        = list(string)
+  description = "Collection ID prefixes to exclude from ingest subscription"
+  default     = []
+}
