@@ -13,6 +13,8 @@ from utils import get_db_connection, validate_environment_variables
 import re
 from psycopg.sql import SQL, Identifier, Literal
 import botocore
+import tempfile
+from cryptography.hazmat.primitives.serialization import pkcs12, Encoding, PrivateFormat, NoEncryption
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -27,6 +29,51 @@ def build_response(status_code: int, body: any) -> dict[str, any]:
         },
         "body": json.dumps(body),
     }
+
+
+def get_launchpad_token():
+    """Retrieves Launchpad token using client certificate authentication."""
+    s3 = boto3.client('s3')
+    secrets = boto3.client('secretsmanager')
+    secret_arn = os.getenv('LAUNCHPAD_PASSPHRASE_SECRET_ARN')
+    bucket = os.getenv("LAUNCHPAD_PFX_S3_BUCKET")
+    s3_key = os.getenv("LAUNCHPAD_PFX_S3_KEY")
+    token_endpoint = f"{os.getenv('LAUNCHPAD_TOKEN_ENDPOINT').rstrip('/')}/gettoken"
+    cert_bytes = s3.get_object(Bucket=bucket, Key=s3_key)['Body'].read()
+    logger.debug(f"Loaded cert from s3://{bucket}/{s3_key}: {len(cert_bytes)} bytes, magic={cert_bytes[:4].hex()}")
+
+    secret_string = secrets.get_secret_value(SecretId=secret_arn)['SecretString']
+    try:
+        passphrase = json.loads(secret_string)['launchpad_passphrase'].strip()
+    except (json.JSONDecodeError, KeyError):
+        passphrase = secret_string.strip()
+    logger.debug(f"Passphrase loaded from secret {secret_arn}: len={len(passphrase)}")
+
+    private_key, certificate, _ = pkcs12.load_key_and_certificates(cert_bytes, passphrase.encode())
+    logger.debug(f"PKCS12 loaded successfully: cert subject={certificate.subject.rfc4514_string()}")
+
+    cert_pem = certificate.public_bytes(Encoding.PEM)
+    key_pem = private_key.private_bytes(Encoding.PEM, PrivateFormat.TraditionalOpenSSL, NoEncryption())
+
+    with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix='.crt') as cert_file:
+        cert_file.write(cert_pem)
+        cert_path = cert_file.name
+
+    with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix='.key') as key_file:
+        key_file.write(key_pem)
+        key_path = key_file.name
+
+    try:
+        response = requests.get(
+            token_endpoint,
+            cert=(cert_path, key_path),
+            timeout=30
+        )
+        response.raise_for_status()
+        return response.json()['sm_token']
+    finally:
+        os.unlink(cert_path)
+        os.unlink(key_path)
 
 
 def check_collections(conn) -> bool:
@@ -67,11 +114,12 @@ def parse_event(event):
     return collections, body.get("backfill", "")
 
 
-def get_cmr_time(collection_id: str) -> Tuple[str, str]:
+def get_cmr_time(collection_id: str, token: str) -> Tuple[str, str]:
     """Retrieve temporal extent information for a collection from CMR.
 
     Args:
         collection_id (str): The collection ID in format 'short_name___version'.
+        token (str): Launchpad token used to authenticate a privileged CMR query.
 
     Returns:
         tuple: A tuple containing (start_time, end_time) where start_time is a
@@ -84,9 +132,9 @@ def get_cmr_time(collection_id: str) -> Tuple[str, str]:
         url = f"https://cmr.earthdata.nasa.gov/search/collections.umm_json_v1_4?short_name={short_name}&version={version}"
     else:
         url = f"https://cmr.{cmr_env}.earthdata.nasa.gov/search/collections.umm_json_v1_4?short_name={short_name}&version={version}"
-    
+
     logger.debug(f"Requesting granule time from: {url}")
-    res = requests.get(url)
+    res = requests.get(url, headers={"Echo-Token": token})
     data = res.json()
     if not data["items"]:
         logger.error(f"{collection_id} not found in CMR")
@@ -100,7 +148,7 @@ def get_cmr_time(collection_id: str) -> Tuple[str, str]:
     return start, end
 
 
-def init_collection(collection_name, collection_version, conn) -> str:
+def init_collection(collection_name, collection_version, conn, token) -> str:
     """
     Initializes a collection in the database by creating a partition for the collection,
     adding collection to `collections` table, and adding an initial gap spanning the collection's
@@ -109,6 +157,8 @@ def init_collection(collection_name, collection_version, conn) -> str:
     Args:
         collection_name (str): Collection short name
         collection_version (str): Collection version
+        conn: Database connection
+        token (str): Launchpad token used to authenticate the privileged CMR query
 
     Returns:
         dict: Response from the Lambda invocation
@@ -116,7 +166,7 @@ def init_collection(collection_name, collection_version, conn) -> str:
 
     collection_id = f"{collection_name}___{collection_version}"
     try:
-        start, end = get_cmr_time(collection_id)
+        start, end = get_cmr_time(collection_id, token)
         logger.debug(f"Retrieved temporal extent for {collection_id}: {start} to {end}")
 
         # For new collection, partition `gaps` and `reasons` tables  and insert into `collections` table
@@ -149,7 +199,7 @@ def init_collection(collection_name, collection_version, conn) -> str:
                 logger.info(
                     f"Created gaps partition {partition_name} for collection {collection_id}"
                 )
-            
+
             # Create partition on `reasons` table
             reasons_partition_name = f"reasons_{safe_collection_id}"
             cur.execute(
@@ -291,6 +341,10 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
             "CMR_ENV",
             "MIGRATION_STREAM_COMPILER_LAMBDA",
             "TOLERANCE_TABLE_NAME",
+            "LAUNCHPAD_TOKEN_ENDPOINT",
+            "LAUNCHPAD_PASSPHRASE_SECRET_ARN",
+            "LAUNCHPAD_PFX_S3_BUCKET",
+            "LAUNCHPAD_PFX_S3_KEY",
         ]
     )
 
@@ -309,12 +363,14 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
         if http_method != "POST":
             return build_response(405, {"message": "Unsupported request method"})
 
+        token = get_launchpad_token()
+
         with get_db_connection() as conn:
             current_collections = check_collections(conn)
             for collection in collections:
                 collection_id = f"{collection['name']}___{collection['version']}"
                 tolerance = collection.get("tolerance")
-                
+
                 # Update tolerance table even if the collection already exists
                 if tolerance is not None:
                     try:
@@ -328,10 +384,10 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
                         logger.error(
                             f"Error saving tolerance for {collection['name']}___{collection['raw_version']}: {str(e)}"
                         )
-                        
+
                 # Add collection to collections table, create partition for gaps table, set initial full gap
                 if collection_id not in current_collections:
-                    init_collection(collection["name"], collection["version"], conn)
+                    init_collection(collection["name"], collection["version"], conn, token)
 
                     # Kick off the migration stream
                     try:
@@ -348,7 +404,7 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
                             f"Collection {collection_id} left in incomplete state, use force=True to rectify"
                         )
                         return build_response(500, {"message": message})
-                        
+
                 # Skip DB init but still backfill granules from CMR
                 elif backfill_behavior.lower() == "force":
                     logger.info(
