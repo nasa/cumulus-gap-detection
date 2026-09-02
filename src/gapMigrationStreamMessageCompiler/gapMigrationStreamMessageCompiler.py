@@ -9,12 +9,8 @@ import asyncio
 import aiohttp
 import aioboto3
 from aiobotocore.config import AioConfig
-from utils import validate_environment_variables
+from utils import validate_environment_variables, get_launchpad_token
 import ssl
-import tempfile
-import boto3
-import requests
-from cryptography.hazmat.primitives.serialization import pkcs12, Encoding, PrivateFormat, NoEncryption
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -30,50 +26,6 @@ loop = asyncio.get_event_loop()
 ## =====================================================================================
 ## Helper functions
 ## =====================================================================================
-def get_launchpad_token():
-    """Retrieves Launchpad token using client certificate authentication."""
-    s3 = boto3.client('s3')
-    secrets = boto3.client('secretsmanager')
-    secret_arn = os.getenv('LAUNCHPAD_PASSPHRASE_SECRET_ARN')
-    bucket = os.getenv("LAUNCHPAD_PFX_S3_BUCKET")
-    s3_key = os.getenv("LAUNCHPAD_PFX_S3_KEY")
-    token_endpoint = f"{os.getenv('LAUNCHPAD_TOKEN_ENDPOINT').rstrip('/')}/gettoken"
-    cert_bytes = s3.get_object(Bucket=bucket, Key=s3_key)['Body'].read()
-    logger.debug(f"Loaded cert from s3://{bucket}/{s3_key}: {len(cert_bytes)} bytes, magic={cert_bytes[:4].hex()}")
-
-    secret_string = secrets.get_secret_value(SecretId=secret_arn)['SecretString']
-    try:
-        passphrase = json.loads(secret_string)['launchpad_passphrase'].strip()
-    except (json.JSONDecodeError, KeyError):
-        passphrase = secret_string.strip()
-    logger.debug(f"Passphrase loaded from secret {secret_arn}: len={len(passphrase)}")
-
-    private_key, certificate, _ = pkcs12.load_key_and_certificates(cert_bytes, passphrase.encode())
-    logger.debug(f"PKCS12 loaded successfully: cert subject={certificate.subject.rfc4514_string()}")
-
-    cert_pem = certificate.public_bytes(Encoding.PEM)
-    key_pem = private_key.private_bytes(Encoding.PEM, PrivateFormat.TraditionalOpenSSL, NoEncryption())
-    
-    with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix='.crt') as cert_file:
-        cert_file.write(cert_pem)
-        cert_path = cert_file.name
-    
-    with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix='.key') as key_file:
-        key_file.write(key_pem)
-        key_path = key_file.name
-    
-    try:
-        response = requests.get(
-            token_endpoint,
-            cert=(cert_path, key_path),
-            timeout=30
-        )
-        response.raise_for_status()
-        return response.json()['sm_token']
-    finally:
-        os.unlink(cert_path)
-        os.unlink(key_path)
-
 def split_date_ranges(start_date, end_date, num_ranges):
     """
     Splits a date range into a specified number of equal subranges.
@@ -189,7 +141,7 @@ async def fetch_cmr_range(session, url, params, result_queue, fetch_stats, token
     """
     search_after = None
     max_retries = 3
-    
+
     while True:
         headers = {"Echo-Token": token, "CMR-Search-After": search_after} if search_after else {"Echo-Token": token}
 
@@ -287,7 +239,7 @@ async def send_to_sqs(
                 send_stats["total"] += len(current_batch)
             except Exception as e:
                 logger.error(f"Error sending batch to SQS: {str(e)}")
-    
+
 
 async def process_collection(
     partitions,
