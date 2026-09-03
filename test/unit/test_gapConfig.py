@@ -40,7 +40,7 @@ def test_get_cmr_time_success(mock_get):
     }
     mock_get.return_value = mock_response
 
-    start, end = get_cmr_time("TEST___2_0")
+    start, end = get_cmr_time("TEST___2_0", "test-token")
     assert start == "2000-01-01T00:00:00Z"
     assert end == "2020-01-01T00:00:00Z"
 
@@ -56,7 +56,7 @@ def test_collection_already_exists(setup_test_data, mock_cmr_time):
     collection_name = "TEST_COLLECTION"
     collection_version = "1_0"
     with get_db_connection() as conn:
-        result = init_collection(collection_name, collection_version, conn)
+        result = init_collection(collection_name, collection_version, conn, "test-token")
     assert result.startswith("Successfully initialized collection") or "already exists" in result
 
 def test_successful_initialization(mock_cmr_time):
@@ -69,7 +69,7 @@ def test_successful_initialization(mock_cmr_time):
             cur.execute("DELETE FROM collections WHERE collection_id = %s", 
                        (f"{collection_name}___{collection_version}",))
     with get_db_connection() as conn:
-        result = init_collection(collection_name, collection_version, conn)
+        result = init_collection(collection_name, collection_version, conn, "test-token")
     assert result == f"Initialized collection {collection_name}___{collection_version} in table"
     with get_db_connection() as conn:
         with conn.cursor() as cur:
@@ -93,7 +93,7 @@ def test_unique_violation_error(mock_cmr_time, simulate_unique_violation):
     
     # Try to initialize a collection, the mock should cause it to fail
     with get_db_connection() as conn:
-        result = init_collection("NEW_TEST_COLLECTION", "1_0", conn)
+        result = init_collection("NEW_TEST_COLLECTION", "1_0", conn, "test-token")
     assert "initialization failed" in result
 
 def test_unsupported_method(mock_cmr_time):
@@ -249,7 +249,7 @@ def test_get_cmr_time_no_end_time(mock_get):
     }
     mock_get.return_value = mock_response
 
-    start, end = get_cmr_time("TEST___1_0")
+    start, end = get_cmr_time("TEST___1_0", "test-token")
     assert start == "2010-05-05T00:00:00Z"
     assert end == datetime.max.isoformat()
 
@@ -262,7 +262,7 @@ def test_get_cmr_time_not_found(mock_get):
     mock_get.return_value = mock_response
 
     with pytest.raises(Exception, match="TEST___9_9 not found in CMR"):
-        get_cmr_time("TEST___9_9")
+        get_cmr_time("TEST___9_9", "test-token")
 
 def test_cmr_prod_url():
     """Test the production CMR URL line."""
@@ -286,7 +286,7 @@ def test_cmr_prod_url():
             mock_requests.get.return_value = mock_response
             
             # Call the function - this will hit the prod URL line
-            start, end = get_cmr_time("TEST___001")
+            start, end = get_cmr_time("TEST___001", "test-token")
             
             # Verify the production URL was used
             mock_requests.get.assert_called_once()
