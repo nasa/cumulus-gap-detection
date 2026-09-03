@@ -9,7 +9,7 @@ from psycopg import errors as psycopgErrors
 import psycopg
 from aws_lambda_typing import context as Context, events
 import traceback
-from utils import get_db_connection, validate_environment_variables
+from utils import get_db_connection, validate_environment_variables, get_launchpad_token
 import re
 from psycopg.sql import SQL, Identifier, Literal
 import botocore
@@ -67,11 +67,12 @@ def parse_event(event):
     return collections, body.get("backfill", "")
 
 
-def get_cmr_time(collection_id: str) -> Tuple[str, str]:
+def get_cmr_time(collection_id: str, token: str) -> Tuple[str, str]:
     """Retrieve temporal extent information for a collection from CMR.
 
     Args:
         collection_id (str): The collection ID in format 'short_name___version'.
+        token (str): Launchpad token used to authenticate a privileged CMR query.
 
     Returns:
         tuple: A tuple containing (start_time, end_time) where start_time is a
@@ -84,9 +85,9 @@ def get_cmr_time(collection_id: str) -> Tuple[str, str]:
         url = f"https://cmr.earthdata.nasa.gov/search/collections.umm_json_v1_4?short_name={short_name}&version={version}"
     else:
         url = f"https://cmr.{cmr_env}.earthdata.nasa.gov/search/collections.umm_json_v1_4?short_name={short_name}&version={version}"
-    
+
     logger.debug(f"Requesting granule time from: {url}")
-    res = requests.get(url)
+    res = requests.get(url, headers={"Echo-Token": token})
     data = res.json()
     if not data["items"]:
         logger.error(f"{collection_id} not found in CMR")
@@ -100,7 +101,7 @@ def get_cmr_time(collection_id: str) -> Tuple[str, str]:
     return start, end
 
 
-def init_collection(collection_name, collection_version, conn) -> str:
+def init_collection(collection_name, collection_version, conn, token) -> str:
     """
     Initializes a collection in the database by creating a partition for the collection,
     adding collection to `collections` table, and adding an initial gap spanning the collection's
@@ -109,6 +110,8 @@ def init_collection(collection_name, collection_version, conn) -> str:
     Args:
         collection_name (str): Collection short name
         collection_version (str): Collection version
+        conn: Database connection
+        token (str): Launchpad token used to authenticate the privileged CMR query
 
     Returns:
         dict: Response from the Lambda invocation
@@ -116,7 +119,7 @@ def init_collection(collection_name, collection_version, conn) -> str:
 
     collection_id = f"{collection_name}___{collection_version}"
     try:
-        start, end = get_cmr_time(collection_id)
+        start, end = get_cmr_time(collection_id, token)
         logger.debug(f"Retrieved temporal extent for {collection_id}: {start} to {end}")
 
         # For new collection, partition `gaps` and `reasons` tables  and insert into `collections` table
@@ -149,7 +152,7 @@ def init_collection(collection_name, collection_version, conn) -> str:
                 logger.info(
                     f"Created gaps partition {partition_name} for collection {collection_id}"
                 )
-            
+
             # Create partition on `reasons` table
             reasons_partition_name = f"reasons_{safe_collection_id}"
             cur.execute(
@@ -291,6 +294,10 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
             "CMR_ENV",
             "MIGRATION_STREAM_COMPILER_LAMBDA",
             "TOLERANCE_TABLE_NAME",
+            "LAUNCHPAD_TOKEN_ENDPOINT",
+            "LAUNCHPAD_PASSPHRASE_SECRET_ARN",
+            "LAUNCHPAD_PFX_S3_BUCKET",
+            "LAUNCHPAD_PFX_S3_KEY",
         ]
     )
 
@@ -309,12 +316,14 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
         if http_method != "POST":
             return build_response(405, {"message": "Unsupported request method"})
 
+        token = get_launchpad_token()
+
         with get_db_connection() as conn:
             current_collections = check_collections(conn)
             for collection in collections:
                 collection_id = f"{collection['name']}___{collection['version']}"
                 tolerance = collection.get("tolerance")
-                
+
                 # Update tolerance table even if the collection already exists
                 if tolerance is not None:
                     try:
@@ -328,10 +337,10 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
                         logger.error(
                             f"Error saving tolerance for {collection['name']}___{collection['raw_version']}: {str(e)}"
                         )
-                        
+
                 # Add collection to collections table, create partition for gaps table, set initial full gap
                 if collection_id not in current_collections:
-                    init_collection(collection["name"], collection["version"], conn)
+                    init_collection(collection["name"], collection["version"], conn, token)
 
                     # Kick off the migration stream
                     try:
@@ -348,7 +357,7 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
                             f"Collection {collection_id} left in incomplete state, use force=True to rectify"
                         )
                         return build_response(500, {"message": message})
-                        
+
                 # Skip DB init but still backfill granules from CMR
                 elif backfill_behavior.lower() == "force":
                     logger.info(

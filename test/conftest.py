@@ -16,6 +16,26 @@ DEFAULT_DATE = "2000-01-01 00:00:00"
 DEFAULT_END_DATE = "2100-01-01 00:00:00"
 
 @pytest.fixture(scope="session", autouse=True)
+def set_launchpad_env():
+    """Provide dummy Launchpad env vars so validate_environment_variables passes in tests."""
+    os.environ.setdefault("LAUNCHPAD_TOKEN_ENDPOINT", "https://example-launchpad.test")
+    os.environ.setdefault(
+        "LAUNCHPAD_PASSPHRASE_SECRET_ARN",
+        "arn:aws:secretsmanager:us-east-1:123456789012:secret:test-secret",
+    )
+    os.environ.setdefault("LAUNCHPAD_PFX_S3_BUCKET", "test-bucket")
+    os.environ.setdefault("LAUNCHPAD_PFX_S3_KEY", "test-cert.pfx")
+    yield
+
+@pytest.fixture(autouse=True)
+def mock_launchpad_token():
+    """Prevent tests from making real Launchpad/S3/Secrets Manager calls for the token."""
+    with patch(
+        "src.gapConfig.gapConfig.get_launchpad_token", return_value="test-launchpad-token"
+    ):
+        yield
+
+@pytest.fixture(scope="session", autouse=True)
 def patch_db_config():
     """Patch the database config function for tests."""
     import utils
