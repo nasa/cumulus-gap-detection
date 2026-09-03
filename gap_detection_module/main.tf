@@ -81,6 +81,10 @@ locals {
         CMR_ENV                          = "PROD"
         MIGRATION_STREAM_COMPILER_LAMBDA = "${var.DEPLOY_NAME}-gapMigrationStreamMessageCompiler"
         TOLERANCE_TABLE_NAME             = aws_dynamodb_table.tolerance_table.name
+        LAUNCHPAD_PASSPHRASE_SECRET_ARN  = var.launchpad_passphrase_secret_arn
+        LAUNCHPAD_PFX_S3_BUCKET          = var.launchpad_pfx_s3_bucket
+        LAUNCHPAD_PFX_S3_KEY             = var.launchpad_pfx_s3_key
+        LAUNCHPAD_TOKEN_ENDPOINT         = var.launchpad_token_endpoint
       }
     }
     getTimeGaps = {
