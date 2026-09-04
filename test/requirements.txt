@@ -13,3 +13,4 @@ aiohttp
 aioboto3
 pytest-asyncio
 aioresponses
+cryptography
