@@ -63,7 +63,7 @@ resource "aws_sqs_queue" "gap_detection_deletion_queue" {
 
   name = "${var.DEPLOY_NAME}-gapDetectionDeletionQueue"
 
-  visibility_timeout_seconds = 10
+  visibility_timeout_seconds = 60
 
   message_retention_seconds = 1209600
 
