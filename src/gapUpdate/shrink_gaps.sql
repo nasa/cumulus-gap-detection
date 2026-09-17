@@ -6,15 +6,14 @@ WITH input AS (
   GROUP BY collection_id
 ),
 
--- Existing gaps that intersect with input intervals are deleted
+-- Existing gaps that intersect with input intervals are deleted.
 deleted_gaps AS (
     DELETE FROM gaps
-    WHERE EXISTS (
+    WHERE collection_id = %(collection_id)s
+    AND EXISTS (
         SELECT 1
         FROM input
-        WHERE input.collection_id = gaps.collection_id
-        -- Set intersection between current gaps and input intervals
-        AND tsrange(start_ts, end_ts) && input.input_sets
+        WHERE tsrange(gaps.start_ts, gaps.end_ts) && input.input_sets
     )
     RETURNING collection_id, tsrange(start_ts, end_ts) as target_gaps
 ),

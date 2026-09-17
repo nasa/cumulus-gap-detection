@@ -3,6 +3,7 @@ import json
 import os
 import psycopg
 import logging
+from collections import defaultdict, deque
 from datetime import datetime
 from botocore.exceptions import ClientError
 import requests
@@ -13,35 +14,49 @@ from psycopg.sql import SQL, Identifier, Literal
 from utils import get_db_connection, validate_environment_variables
 import traceback
 
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+logger = logging.getLogger(__name__)
+logger.setLevel(os.getenv("LOG_LEVEL", "INFO").upper())
+
+_MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-def validate_collections(collections: Set[str], conn) -> bool:
-    """Verifies that all given collections are in collections table.
-    Args:
-        collections (set): A set of collection IDs to check and potentially initialize.
-        conn (psycopg.Connection): An active database connection.
+def _load_sql(filename: str) -> str:
+    with open(os.path.join(_MODULE_DIR, filename)) as f:
+        return f.read()
 
-    Returns true if all input collections are in collections table and false otherwise.
-    """
+
+SHRINK_GAPS_QUERY = _load_sql("shrink_gaps.sql")
+GROW_GAPS_QUERY = _load_sql("grow_gaps.sql")
+
+
+def get_all_collections(conn) -> Set[str]:
     with conn.cursor() as cur:
-        cur.execute(
-            f"SELECT collection_id FROM collections WHERE collection_id IN ({','.join(['%s'] * len(collections))})",
-            tuple(collections),
-        )
-        found = {row[0] for row in cur.fetchall()}
-        missing = collections - found
-        if missing:
-            logger.error(f"Collections not in table: {missing}")
-        return not missing
+        cur.execute("SELECT collection_id FROM collections")
+        return {row[0] for row in cur.fetchall()}
 
 
-def update_gaps(
-    collection_id, records_buffer: StringIO, update_query, conn: psycopg.Connection
-) -> None:
+def _run_gap_transaction(
+    collection_id, records_buffer: StringIO, conn: psycopg.Connection,
+    grow: bool = False, blocking: bool = True
+) -> bool:
+    """Runs the specified gap transaction for one collection. """
+    query = GROW_GAPS_QUERY if grow else SHRINK_GAPS_QUERY
+
+    cursor = conn.cursor()
     try:
-        cursor = conn.cursor()
+        # Aqcuire lock to prevent races across concurrent executions.
+        if blocking:
+            cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (collection_id,))
+            acquired = True
+        else:
+            cursor.execute("SELECT pg_try_advisory_xact_lock(hashtext(%s))", (collection_id,))
+            acquired = cursor.fetchone()[0]
+
+        if not acquired:
+            conn.rollback()
+            logger.debug(f"Collection {collection_id} is locked elsewhere, deferring")
+            return False
+
         cursor.execute(
             """
             CREATE TEMP TABLE input_records(
@@ -52,90 +67,10 @@ def update_gaps(
         )
         with cursor.copy("COPY input_records FROM STDIN WITH DELIMITER '\t'") as copy:
             copy.write(records_buffer.read())
-        # Lock collection and perform update procedure
-        cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (collection_id,))
-        cursor.execute(update_query)
+        cursor.execute(query, {"collection_id": collection_id})
         conn.commit()
         logger.debug(f"Transaction committed for collection {collection_id}")
-    except Exception as e:
-        # Rollback on error
-        conn.rollback()
-        logger.error(f"Error processing collection {collection_id}: {str(e)}")
-        logger.debug(traceback.format_exc())
-        raise e
-    finally:
-        cursor.close()
-
-def add_gaps(
-    collection_id, records_buffer: StringIO, conn: psycopg.Connection
-) -> None:
-    try:
-        cursor = conn.cursor()
-        # Load event records
-        cursor.execute(
-            """
-            CREATE TEMP TABLE input_records(
-                collection_id text,
-                start_ts timestamp,
-                end_ts timestamp) ON COMMIT DROP
-        """
-        )
-        with cursor.copy("COPY input_records FROM STDIN WITH DELIMITER '\t'") as copy:
-            copy.write(records_buffer.read())
-
-        # Prevent races across concurrent executions
-        cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (collection_id,))
-
-       # Check for deletions on existing gaps
-        cursor.execute("""
-            SELECT 
-                ir.start_ts as granule_start,
-                ir.end_ts as granule_end,
-                gaps.start_ts as gap_start,
-                gaps.end_ts as gap_end
-            FROM gaps, input_records ir 
-            WHERE gaps.collection_id = ir.collection_id 
-              AND tsrange(gaps.start_ts, gaps.end_ts) && 
-                  tsrange(ir.start_ts, date_trunc('second', ir.end_ts) + interval '1 second')
-        """)
-        
-        overlaps = cursor.fetchall()
-        if overlaps:
-            logger.warning(f"Deletion overlap detected for {collection_id}: {len(overlaps)} deleted granules overlap existing gaps")
-            logger.debug(f"Overlap details for {collection_id}: " + 
-                        ", ".join([f"granule[{o[0]}, {o[1]}] overlaps gap[{o[2]}, {o[3]}]" for o in overlaps]))
-        
-        # Add gaps for deleted granules and merge with existing gaps
-        cursor.execute("""
-            -- Round granule end time up to nearest second to eliminate boundary gaps
-            WITH input_ranges AS (
-                SELECT collection_id, tsrange(start_ts, date_trunc('second', end_ts) + interval '1 second') as gap_range
-                FROM input_records
-            ),
-
-            -- Remove adjacent existing gaps
-            removed_gaps AS (
-                DELETE FROM gaps WHERE gap_id IN (
-                    SELECT gap_id FROM gaps, input_ranges 
-                    WHERE gaps.collection_id = input_ranges.collection_id 
-                    AND (tsrange(gaps.start_ts, gaps.end_ts) && input_ranges.gap_range 
-                         OR tsrange(gaps.start_ts, gaps.end_ts) -|- input_ranges.gap_range)
-                ) RETURNING collection_id, tsrange(start_ts, end_ts) as gap_range
-            ),
-            -- Merge new gaps with existing gaps
-            all_ranges AS (
-                SELECT collection_id, gap_range FROM input_ranges
-                UNION ALL SELECT collection_id, gap_range FROM removed_gaps
-            )
-            INSERT INTO gaps (collection_id, start_ts, end_ts)
-            SELECT collection_id, lower(merged_range), upper(merged_range) 
-            FROM (SELECT collection_id, unnest(range_agg(gap_range)) merged_range 
-                  FROM all_ranges GROUP BY collection_id) final_ranges
-        """)
-        
-        conn.commit()
-        logger.debug(f"Added gaps to collection {collection_id}")
-        
+        return True
     except Exception as e:
         conn.rollback()
         logger.error(f"Error processing collection {collection_id}: {str(e)}")
@@ -157,74 +92,73 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
     validate_environment_variables(
         ["RDS_SECRET", "RDS_PROXY_HOST", "CMR_ENV", "AWS_REGION", "DELETION_QUEUE_ARN"]
     )
-    delete = False
-    # Parse records and group by collection
-    records_by_collection = {}
-    all_collections = set()
-    
-    for record in event["Records"]:
-        # Check which queue this event is from 
-        if record["eventSourceARN"] == os.getenv("DELETION_QUEUE_ARN"):
-            logger.debug("Adding gaps for deleted granules")
-            delete = True
-        r = json.loads(json.loads(record["body"])["Message"])["record"]
-        collection_id = r["collectionId"].replace(".", "_")
-
-        # Initialize empty key if first record from collection this batch
-        if collection_id not in records_by_collection:
-            records_by_collection[collection_id] = {"records": [], "message_ids": []}
-
-        records_by_collection[collection_id]["records"].append(
-            {
-                "collection_id": collection_id,
-                "start_ts": r["beginningDateTime"],
-                "end_ts": r["endingDateTime"],
-            }
-        )
-        records_by_collection[collection_id]["message_ids"].append(record["messageId"])
-        all_collections.add(collection_id)
-    
-    total_records = sum(len(recs["records"]) for recs in records_by_collection.values())
-    operation_type = "gap addition" if delete else "gap update"
-    logger.info(f"Processing {operation_type}: {total_records} records across {len(all_collections)} collections")
 
     failures = []
     with get_db_connection() as conn:
-        # Load update query
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        query_path = os.path.join(current_dir, "update_gaps.sql")
-        with open(query_path) as f:
-            update_query = f.read()
+        # Fetch all monitored collections
+        monitored_collections = get_all_collections(conn)
 
-        # Process each collection in a dedicated transaction to facilitate parallelism
-        for collection_id, data in records_by_collection.items():
+        delete = False
+        records_by_collection = defaultdict(lambda: {"records": [], "message_ids": []})
+        unmonitored_seen = set()
+
+        for record in event["Records"]:
+            # Check which queue this event is from
+            if record["eventSourceARN"] == os.getenv("DELETION_QUEUE_ARN"):
+                logger.debug("Adding gaps for deleted granules")
+                delete = True
+            r = json.loads(json.loads(record["body"])["Message"])["record"]
+            collection_id = r["collectionId"].replace(".", "_")
+
+            if collection_id not in monitored_collections:
+                if collection_id not in unmonitored_seen:
+                    logger.info(f"Skipping unmonitored collection, not opted into gap tracking: {collection_id}")
+                    unmonitored_seen.add(collection_id)
+                continue
+
+            records_by_collection[collection_id]["records"].append(
+                {
+                    "collection_id": collection_id,
+                    "start_ts": r["beginningDateTime"],
+                    "end_ts": r["endingDateTime"],
+                }
+            )
+            records_by_collection[collection_id]["message_ids"].append(record["messageId"])
+
+        total_records = sum(len(data["records"]) for data in records_by_collection.values())
+        logger.info(
+            f"Processing gap {'growth' if delete else 'shrink'}: {total_records} records across "
+            f"{len(records_by_collection)} monitored collections"
+        )
+
+        def build_buffer(records):
+            buffer = StringIO()
+            for r in records:
+                buffer.write(f"{r['collection_id']}\t{r['start_ts']}\t{r['end_ts']}\n")
+            buffer.seek(0)
+            return buffer
+
+        # Process each collection, skip waiting for lock while we have multiple pending
+        pending = deque(
+            (collection_id, data, build_buffer(data["records"]), False)
+            for collection_id, data in records_by_collection.items()
+        )
+        while pending:
+            collection_id, data, buffer, blocking = pending.popleft()
             try:
-                # Verify this collection has been initialized
-                if not validate_collections({collection_id}, conn):
-                    failures.extend(data["message_ids"])
-                    continue
-
-                logger.debug(f"Processing collection {collection_id} with {len(data["records"])} records")
-                buffer = StringIO()
-                for r in data["records"]:
-                    line = f"{r['collection_id']}\t{r['start_ts']}\t{r['end_ts']}\n"
-                    buffer.write(line)
-                buffer.seek(0)
-                
-                if delete:
-                    add_gaps(collection_id, buffer, conn)
-                else:
-                    update_gaps(collection_id, buffer, update_query, conn)
-
+                logger.debug(f"Processing collection {collection_id} with {len(data['records'])} records")
+                acquired = _run_gap_transaction(collection_id, buffer, conn, grow=delete, blocking=blocking)
+                if not acquired:
+                    pending.append((collection_id, data, buffer, True))
             except Exception as e:
                 logger.error(f"Failed to process collection {collection_id}: {str(e)}")
                 failures.extend(data["message_ids"])
 
     # Summary logging
     if failures:
-        logger.warning(f"{operation_type} completed with failures: {len(failures)} failed messages from {len(all_collections)} collections")
+        logger.warning(f"gap {'growth' if delete else 'shrink'} completed with failures: {len(failures)} failed messages from {len(records_by_collection)} collections")
     else:
-        logger.info(f"{operation_type} completed successfully: {len(all_collections)} collections processed")
+        logger.info(f"gap {'growth' if delete else 'shrink'} completed successfully: {len(records_by_collection)} collections processed")
 
     # Return failed messages to the queue
     return {
