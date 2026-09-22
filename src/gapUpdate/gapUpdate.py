@@ -13,6 +13,7 @@ from aws_lambda_typing import context as Context, events
 from psycopg.sql import SQL, Identifier, Literal
 from utils import get_db_connection, validate_environment_variables
 import traceback
+import time 
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("LOG_LEVEL", "INFO").upper())
@@ -43,20 +44,25 @@ def _run_gap_transaction(
     query = GROW_GAPS_QUERY if grow else SHRINK_GAPS_QUERY
 
     cursor = conn.cursor()
+    timings = {}
+    t_start = time.perf_counter()
     try:
         # Aqcuire lock to prevent races across concurrent executions.
+        t0 = time.perf_counter()
         if blocking:
             cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (collection_id,))
             acquired = True
         else:
             cursor.execute("SELECT pg_try_advisory_xact_lock(hashtext(%s))", (collection_id,))
             acquired = cursor.fetchone()[0]
+        timings["lock_acquire"] = time.perf_counter() - t0
 
         if not acquired:
             conn.rollback()
             logger.debug(f"Collection {collection_id} is locked elsewhere, deferring")
             return False
 
+        t0 = time.perf_counter()
         cursor.execute(
             """
             CREATE TEMP TABLE input_records(
@@ -65,11 +71,31 @@ def _run_gap_transaction(
                 end_ts timestamp) ON COMMIT DROP
         """
         )
+        timings["create_temp_table"] = time.perf_counter() - t0
+
+        t0 = time.perf_counter()
         with cursor.copy("COPY input_records FROM STDIN WITH DELIMITER '\t'") as copy:
             copy.write(records_buffer.read())
+        timings["copy_records"] = time.perf_counter() - t0
+
+        t0 = time.perf_counter()
         cursor.execute(query, {"collection_id": collection_id})
+        timings["run_query"] = time.perf_counter() - t0
+
+        t0 = time.perf_counter()
         conn.commit()
-        logger.debug(f"Transaction committed for collection {collection_id}")
+        timings["commit"] = time.perf_counter() - t0
+
+        timing_str = ", ".join(f"{k}={v * 1000:.1f}ms" for k, v in timings.items())
+        total_ms = (time.perf_counter() - t_start) * 1000
+        logger.debug(f"Transaction committed for collection {collection_id} ({timing_str}, total={total_ms:.1f}ms)")
+
+        SLOW_STEP_THRESHOLD_S = 0.5
+        slow_steps = {k: v for k, v in timings.items() if v > SLOW_STEP_THRESHOLD_S}
+        if slow_steps:
+            slow_str = ", ".join(f"{k}={v * 1000:.1f}ms" for k, v in slow_steps.items())
+            logger.warning(f"Slow step(s) processing collection {collection_id}: {slow_str}")
+
         return True
     except Exception as e:
         conn.rollback()
@@ -78,6 +104,7 @@ def _run_gap_transaction(
         raise e
     finally:
         cursor.close()
+
 
 def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
     """Main event handler that orchestrates batch processing.
