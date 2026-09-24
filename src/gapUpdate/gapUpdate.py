@@ -14,6 +14,14 @@ from psycopg.sql import SQL, Identifier, Literal
 from utils import get_db_connection, validate_environment_variables
 import traceback
 import time 
+import threading
+from psycopg import errors as pg_errors
+
+CLEANUP_MARGIN_SECONDS = float(os.getenv("CLEANUP_MARGIN_SECONDS", "1"))
+
+class _DeadlineExceeded(Exception):
+    """Raised when the invocation's cleanup margin is reached"""
+
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("LOG_LEVEL", "INFO").upper())
@@ -38,31 +46,27 @@ def get_all_collections(conn) -> Set[str]:
 
 def _run_gap_transaction(
     collection_id, records_buffer: StringIO, conn: psycopg.Connection,
-    grow: bool = False, blocking: bool = True
+    deadline: float, grow: bool = False
 ) -> bool:
-    """Runs the specified gap transaction for one collection. """
     query = GROW_GAPS_QUERY if grow else SHRINK_GAPS_QUERY
-
     cursor = conn.cursor()
-    timings = {}
-    t_start = time.perf_counter()
+
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise _DeadlineExceeded(collection_id)
+    timer = threading.Timer(remaining, conn.cancel_safe)
+    timer.daemon = True
+    timer.start()
     try:
         # Aqcuire lock to prevent races across concurrent executions.
-        t0 = time.perf_counter()
-        if blocking:
-            cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (collection_id,))
-            acquired = True
-        else:
-            cursor.execute("SELECT pg_try_advisory_xact_lock(hashtext(%s))", (collection_id,))
-            acquired = cursor.fetchone()[0]
-        timings["lock_acquire"] = time.perf_counter() - t0
+        cursor.execute("SELECT pg_try_advisory_xact_lock(hashtext(%s))", (collection_id,))
+        acquired = cursor.fetchone()[0]
 
         if not acquired:
             conn.rollback()
             logger.debug(f"Collection {collection_id} is locked elsewhere, deferring")
             return False
 
-        t0 = time.perf_counter()
         cursor.execute(
             """
             CREATE TEMP TABLE input_records(
@@ -71,38 +75,23 @@ def _run_gap_transaction(
                 end_ts timestamp) ON COMMIT DROP
         """
         )
-        timings["create_temp_table"] = time.perf_counter() - t0
-
-        t0 = time.perf_counter()
         with cursor.copy("COPY input_records FROM STDIN WITH DELIMITER '\t'") as copy:
             copy.write(records_buffer.read())
-        timings["copy_records"] = time.perf_counter() - t0
-
-        t0 = time.perf_counter()
         cursor.execute(query, {"collection_id": collection_id})
-        timings["run_query"] = time.perf_counter() - t0
-
-        t0 = time.perf_counter()
         conn.commit()
-        timings["commit"] = time.perf_counter() - t0
-
-        timing_str = ", ".join(f"{k}={v * 1000:.1f}ms" for k, v in timings.items())
-        total_ms = (time.perf_counter() - t_start) * 1000
-        logger.debug(f"Transaction committed for collection {collection_id} ({timing_str}, total={total_ms:.1f}ms)")
-
-        SLOW_STEP_THRESHOLD_S = 0.5
-        slow_steps = {k: v for k, v in timings.items() if v > SLOW_STEP_THRESHOLD_S}
-        if slow_steps:
-            slow_str = ", ".join(f"{k}={v * 1000:.1f}ms" for k, v in slow_steps.items())
-            logger.warning(f"Slow step(s) processing collection {collection_id}: {slow_str}")
-
+        logger.debug(f"Transaction committed for collection {collection_id}")
         return True
+    except pg_errors.QueryCanceled:
+        conn.rollback()
+        logger.warning(f"Cancelled processing collection {collection_id}: cleanup margin reached mid-transaction")
+        raise _DeadlineExceeded(collection_id)
     except Exception as e:
         conn.rollback()
         logger.error(f"Error processing collection {collection_id}: {str(e)}")
         logger.debug(traceback.format_exc())
         raise e
     finally:
+        timer.cancel()
         cursor.close()
 
 
@@ -116,6 +105,7 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
     Returns:
         dict: HTTP response with status code 200 on success or error status.
     """
+
     validate_environment_variables(
         ["RDS_SECRET", "RDS_PROXY_HOST", "CMR_ENV", "AWS_REGION", "DELETION_QUEUE_ARN"]
     )
@@ -165,29 +155,37 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
             buffer.seek(0)
             return buffer
 
-        # Process each collection, skip waiting for lock while we have multiple pending
+        # deadline for the invocation at which point we abort remaining work
+        deadline = time.monotonic() + (context.get_remaining_time_in_millis() / 1000.0) - CLEANUP_MARGIN_SECONDS
+
         pending = deque(
-            (collection_id, data, build_buffer(data["records"]), False)
+            (collection_id, data, build_buffer(data["records"]))
             for collection_id, data in records_by_collection.items()
         )
         while pending:
-            collection_id, data, buffer, blocking = pending.popleft()
+            collection_id, data, buffer = pending.popleft()
             try:
                 logger.debug(f"Processing collection {collection_id} with {len(data['records'])} records")
-                acquired = _run_gap_transaction(collection_id, buffer, conn, grow=delete, blocking=blocking)
+                acquired = _run_gap_transaction(collection_id, buffer, conn, deadline, grow=delete)
                 if not acquired:
-                    pending.append((collection_id, data, buffer, True))
+                    pending.append((collection_id, data, buffer))
+            except _DeadlineExceeded:
+                logger.warning(
+                    f"Deadline reached on collection {collection_id}; deferring it and "
+                    f"{len(pending)} remaining collection(s) to batchItemFailures"
+                )
+                failures.extend(data["message_ids"])
+                for _cid, d, _buf in pending:
+                    failures.extend(d["message_ids"])
+                pending.clear()
             except Exception as e:
                 logger.error(f"Failed to process collection {collection_id}: {str(e)}")
                 failures.extend(data["message_ids"])
-
-    # Summary logging
     if failures:
         logger.warning(f"gap {'growth' if delete else 'shrink'} completed with failures: {len(failures)} failed messages from {len(records_by_collection)} collections")
     else:
         logger.info(f"gap {'growth' if delete else 'shrink'} completed successfully: {len(records_by_collection)} collections processed")
 
-    # Return failed messages to the queue
     return {
         "batchItemFailures": [{"itemIdentifier": message_id} for message_id in failures]
     }
