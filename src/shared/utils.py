@@ -138,43 +138,27 @@ def get_connection_pool() -> ConnectionPool:
 def get_db_connection(retry_count=3):
     """Get a connection from the pool with retry and ensure it's returned when done.
 
-    This function should be used with a 'with' statement.
+    This function should be used with a 'with' statement. Only acquisition and
+    connection validation are retried; transaction and commit errors propagate
+    after rollback and connection release.
 
     Yields:
         psycopg.Connection: A database connection from the pool
     """
     pool = get_connection_pool()
-    conn = None
 
     for attempt in range(retry_count):
+        conn = None
         try:
             conn = pool.getconn(timeout=10)
 
-            # Validate connection is usable
+            # Validate connection before entering the caller's transaction.
             with conn.cursor() as cur:
                 cur.execute("SELECT 1")
 
-            # Connection is good, yield it
-            try:
-                yield conn
-                if not conn.closed:
-                    conn.commit()
-            except Exception as e:
-                if not conn.closed:
-                    conn.rollback()
-                raise
-            finally:
-                if conn and not conn.closed:
-                    pool.putconn(conn)
-
-            return
-
         except (psycopg.OperationalError, PoolTimeout) as e:
-            if conn and not conn.closed:
-                try:
-                    pool.putconn(conn)
-                except:
-                    pass
+            if conn is not None:
+                pool.putconn(conn)
 
             if attempt < retry_count - 1:
                 logger.debug(
@@ -186,6 +170,26 @@ def get_db_connection(retry_count=3):
                     f"Failed to get working connection after {retry_count} attempts"
                 )
                 raise
+            continue
+        except BaseException:
+            if conn is not None:
+                pool.putconn(conn)
+            raise
+
+        # Once yielded, errors belong to the caller's transaction and must not
+        # restart this generator or acquire a second connection.
+        try:
+            yield conn
+            if not conn.closed:
+                conn.commit()
+        except BaseException:
+            if not conn.closed:
+                conn.rollback()
+            raise
+        finally:
+            # Return closed connections too, so the pool can replace them.
+            pool.putconn(conn)
+        return
 
 
 def sanitize_versionid(versionid) -> str:
