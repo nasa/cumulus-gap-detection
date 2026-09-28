@@ -108,8 +108,8 @@ def setup_test_data():
 def mock_sql():
     from unittest.mock import mock_open
 
-    with patch('os.path.join', return_value='shrink_gaps.sql'):
-        with open("src/gapUpdate/shrink_gaps.sql", "r") as f:
+    with patch('os.path.join', return_value='close_gaps.sql'):
+        with open("src/gapUpdate/close_gaps.sql", "r") as f:
             actual_sql = f.read()
         with patch('builtins.open', mock_open(read_data=actual_sql)) as m:
             yield m
@@ -264,7 +264,7 @@ def get_gap_count(collection_id):
             return cur.fetchone()[0]
 
 def get_sql_query():
-    with open("src/gapUpdate/shrink_gaps.sql", "r") as f:
+    with open("src/gapUpdate/close_gaps.sql", "r") as f:
         return f.read()
 
 # Additional helper functions for API testing

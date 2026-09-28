@@ -24,8 +24,8 @@ def test_get_all_collections(setup_test_data):
     assert "nonexistent_collection" not in collections
 
 
-class TestShrinkOperation:
-    """Tests _run_gap_transaction with grow=False (the default), i.e.
+class TestCloseOperation:
+    """Tests _run_gap_transaction with _open=False (the default), i.e.
     shrinking gap coverage based on newly-arrived granules."""
 
     @pytest.mark.parametrize("scenario,initial_gaps,granules,expected_gaps", [
@@ -161,7 +161,7 @@ class TestShrinkOperation:
         assert gaps[0][1] == datetime.fromisoformat('2000-12-31 23:59:59')
 
 
-class TestGrowOperation:
+class TestOpenOperation:
 
     def test_basic(self, setup_test_data):
         from utils import get_db_connection
@@ -174,7 +174,7 @@ class TestGrowOperation:
         ]
 
         with get_db_connection() as conn:
-            _run_gap_transaction(TEST_COLLECTION_ID, create_buffer(deleted_granules), conn, future_deadline(), grow=True)
+            _run_gap_transaction(TEST_COLLECTION_ID, create_buffer(deleted_granules), conn, future_deadline(), _open=True)
 
         gaps = get_gaps(TEST_COLLECTION_ID)
         assert len(gaps) == 2
@@ -193,7 +193,7 @@ class TestGrowOperation:
         deleted_granule = [create_granule("2000-06-01T00:00:00.000Z", "2000-06-30T23:59:59.000Z")]
 
         with get_db_connection() as conn:
-            _run_gap_transaction(TEST_COLLECTION_ID, create_buffer(deleted_granule), conn, future_deadline(), grow=True)
+            _run_gap_transaction(TEST_COLLECTION_ID, create_buffer(deleted_granule), conn, future_deadline(), _open=True)
 
         gaps = get_gaps(TEST_COLLECTION_ID)
         assert len(gaps) == 1
@@ -217,7 +217,7 @@ class TestGrowOperation:
                     mock_cursor.execute.side_effect = [None, None, Exception("Database error")]
 
                     with pytest.raises(Exception, match="Database error"):
-                        _run_gap_transaction(TEST_COLLECTION_ID, create_buffer(deleted_granule), conn, future_deadline(), grow=True)
+                        _run_gap_transaction(TEST_COLLECTION_ID, create_buffer(deleted_granule), conn, future_deadline(), _open=True)
 
         assert get_gap_count(TEST_COLLECTION_ID) == initial_count
 
@@ -231,7 +231,7 @@ class TestGrowOperation:
         ]
 
         with get_db_connection() as conn:
-            _run_gap_transaction(TEST_COLLECTION_ID, create_buffer(deleted_granules), conn, future_deadline(), grow=True)
+            _run_gap_transaction(TEST_COLLECTION_ID, create_buffer(deleted_granules), conn, future_deadline(), _open=True)
 
         gaps = get_gaps(TEST_COLLECTION_ID)
         assert len(gaps) == 1
@@ -270,7 +270,7 @@ class TestLambdaHandler:
             result = lambda_handler(event, FakeLambdaContext())
 
         assert mock_run.called
-        assert mock_run.call_args.kwargs.get("grow", False) is False
+        assert mock_run.call_args.kwargs.get("_open", False) is False
         assert result["batchItemFailures"] == []
 
     @patch.dict(os.environ, {
@@ -411,7 +411,7 @@ class TestLambdaHandler:
             result = lambda_handler(event, FakeLambdaContext())
 
             assert mock_run.called
-            assert mock_run.call_args.kwargs["grow"] is True
+            assert mock_run.call_args.kwargs["_open"] is True
             assert result["batchItemFailures"] == []
 
     @patch.dict(os.environ, {

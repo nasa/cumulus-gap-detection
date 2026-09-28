@@ -34,8 +34,8 @@ def _load_sql(filename: str) -> str:
         return f.read()
 
 
-SHRINK_GAPS_QUERY = _load_sql("shrink_gaps.sql")
-GROW_GAPS_QUERY = _load_sql("grow_gaps.sql")
+CLOSE_GAPS_QUERY = _load_sql("close_gaps.sql")
+OPEN_GAPS_QUERY = _load_sql("open_gaps.sql")
 
 
 def get_all_collections(conn) -> Set[str]:
@@ -46,9 +46,9 @@ def get_all_collections(conn) -> Set[str]:
 
 def _run_gap_transaction(
     collection_id, records_buffer: StringIO, conn: psycopg.Connection,
-    deadline: float, grow: bool = False
+    deadline: float, _open: bool = False
 ) -> bool:
-    query = GROW_GAPS_QUERY if grow else SHRINK_GAPS_QUERY
+    query = OPEN_GAPS_QUERY if _open else CLOSE_GAPS_QUERY
     cursor = conn.cursor()
 
     if deadline - time.monotonic() <= 0:
@@ -155,7 +155,7 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
 
             total_records = sum(len(data["records"]) for data in records_by_collection.values())
             logger.info(
-                f"Processing gap {'growth' if delete else 'shrink'}: {total_records} records across "
+                f"Processing gap {'open' if delete else 'close'}: {total_records} records across "
                 f"{len(records_by_collection)} monitored collections"
             )
 
@@ -174,7 +174,7 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
                 collection_id, data, buffer = pending.popleft()
                 try:
                     logger.debug(f"Processing collection {collection_id} with {len(data['records'])} records")
-                    acquired = _run_gap_transaction(collection_id, buffer, conn, deadline, grow=delete)
+                    acquired = _run_gap_transaction(collection_id, buffer, conn, deadline, _open=delete)
                     if not acquired:
                         pending.append((collection_id, data, buffer))
                 except _DeadlineExceeded:
@@ -201,9 +201,9 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
             timer.cancel()
 
     if failures:
-        logger.warning(f"gap {'growth' if delete else 'shrink'} completed with failures: {len(failures)} failed messages from {len(records_by_collection)} collections")
+        logger.warning(f"gap {'open' if delete else 'close'} completed with failures: {len(failures)} failed messages from {len(records_by_collection)} collections")
     else:
-        logger.info(f"gap {'growth' if delete else 'shrink'} completed successfully: {len(records_by_collection)} collections processed")
+        logger.info(f"gap {'open' if delete else 'close'} completed successfully: {len(records_by_collection)} collections processed")
 
     return {
         "batchItemFailures": [{"itemIdentifier": message_id} for message_id in failures]
