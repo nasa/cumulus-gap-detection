@@ -13,6 +13,7 @@ deleted_gaps AS (
     AND EXISTS (
         SELECT 1
         FROM input
+        -- Set intersection between current gaps and input intervals
         WHERE tsrange(gaps.start_ts, gaps.end_ts) && input.input_sets
     )
     RETURNING collection_id, tsrange(start_ts, end_ts) as target_gaps
