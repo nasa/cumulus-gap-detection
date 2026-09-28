@@ -22,7 +22,7 @@ locals {
         ]
   gap_functions = {
     gapUpdate = {
-      timeout     = 30
+      timeout     = 60
       memory_size = 512
       variables = {
         LOG_LEVEL          = var.log_level

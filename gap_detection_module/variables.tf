@@ -53,7 +53,7 @@ variable "sqs_trigger_max_batch_window" {
 variable "sqs_trigger_max_concurrency" {
   description = "The maximum number of concurrent executions the SQS event source can trigger"
   type        = string
-  default     = 4
+  default     = 256
 }
 
 variable "security_group_ids" {
