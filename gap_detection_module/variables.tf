@@ -47,7 +47,7 @@ variable "sqs_trigger_process_gaps_batch_size" {
 variable "sqs_trigger_max_batch_window" {
   description = "The maximum amount of time to gather records before invoking the function, in seconds"
   type        = string
-  default     = 30
+  default     = 300
 }
 
 variable "sqs_trigger_max_concurrency" {
