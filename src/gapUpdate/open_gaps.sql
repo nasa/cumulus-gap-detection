@@ -1,18 +1,22 @@
 -- Round granule end time up to nearest second to eliminate boundary gaps
 WITH input_ranges AS (
-    SELECT collection_id, tsrange(start_ts, date_trunc('second', end_ts) + interval '1 second') as gap_range
+    SELECT %(collection_id)s AS collection_id, tsrange(start_ts, date_trunc('second', end_ts) + interval '1 second') as gap_range
     FROM input_records
+    WHERE collection_id = %(collection_id)s
 ),
 
--- Remove adjacent existing gaps
+-- Remove existing gaps that overlap or are adjacent to input ranges
 removed_gaps AS (
-    DELETE FROM gaps WHERE collection_id = %(collection_id)s AND gap_id IN (
-        SELECT gap_id FROM gaps, input_ranges 
-        WHERE gaps.collection_id = %(collection_id)s
-        AND (tsrange(gaps.start_ts, gaps.end_ts) && input_ranges.gap_range 
-             OR tsrange(gaps.start_ts, gaps.end_ts) -|- input_ranges.gap_range)
-    ) RETURNING collection_id, tsrange(start_ts, end_ts) as gap_range
+    DELETE FROM gaps
+    WHERE collection_id = %(collection_id)s
+    AND EXISTS (
+        SELECT 1 FROM input_ranges
+        WHERE tsrange(gaps.start_ts, gaps.end_ts) && input_ranges.gap_range
+           OR tsrange(gaps.start_ts, gaps.end_ts) -|- input_ranges.gap_range
+    )
+    RETURNING collection_id, tsrange(start_ts, end_ts) as gap_range
 ),
+
 -- Merge new gaps with existing gaps
 all_ranges AS (
     SELECT collection_id, gap_range FROM input_ranges
