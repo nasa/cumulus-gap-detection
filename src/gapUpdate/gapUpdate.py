@@ -74,7 +74,6 @@ def _run_gap_transaction(
             copy.write(records_buffer.read())
         cursor.execute(query, {"collection_id": collection_id})
         conn.commit()
-        logger.debug(f"Transaction committed for collection {collection_id}")
         return True
     except pg_errors.QueryCanceled:
         conn.rollback()
@@ -127,7 +126,7 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
              # Fetch all monitored collections
             monitored_collections = get_all_collections(conn)
 
-            unmonitored_seen = set()
+            unmonitored_counts = defaultdict(int)
             deletion_queue_arn = os.getenv("DELETION_QUEUE_ARN")
             for record in event["Records"]:
 
@@ -138,9 +137,7 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
                 collection_id = r["collectionId"].replace(".", "_")
 
                 if collection_id not in monitored_collections:
-                    if collection_id not in unmonitored_seen:
-                        logger.info(f"Skipping unmonitored collection, not opted into gap tracking: {collection_id}")
-                        unmonitored_seen.add(collection_id)
+                    unmonitored_counts[collection_id] += 1
                     continue
 
                 records_by_collection[collection_id]["records"].append(
@@ -153,10 +150,19 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
                 records_by_collection[collection_id]["message_ids"].append(record["messageId"])
 
             total_records = sum(len(data["records"]) for data in records_by_collection.values())
-            logger.info(
+            breakdown = ", ".join(
+                f"{cid}={len(data['records'])}" for cid, data in sorted(records_by_collection.items())
+            )
+            summary = (
                 f"Processing gap {'open' if delete else 'close'}: {total_records} records across "
                 f"{len(records_by_collection)} monitored collections"
             )
+            if breakdown:
+                summary += f" [{breakdown}]"
+            if unmonitored_counts:
+                skipped = ", ".join(f"{cid}={n}" for cid, n in sorted(unmonitored_counts.items()))
+                summary += f"; skipped unmonitored: [{skipped}]"
+            logger.info(summary)
 
             def build_buffer(records):
                 buffer = StringIO()
@@ -177,20 +183,24 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
                 collection_id, data, buffer = pending.popleft()
                 attempts[collection_id] += 1
                 try:
-                    if attempts[collection_id] == 1:
-                        logger.debug(f"Processing collection {collection_id} with {len(data['records'])} records")
+                    t_start = time.monotonic()
                     acquired = _run_gap_transaction(collection_id, buffer, conn, deadline, _open=delete)
                     if acquired:
+                        txn_ms = (time.monotonic() - t_start) * 1000
+                        msg = (
+                            f"Collection {collection_id}: {len(data['records'])} records, "
+                            f"transaction committed in {txn_ms:.0f}ms"
+                        )
                         if attempts[collection_id] > 1:
-                            waited = time.monotonic() - first_deferred[collection_id]
-                            logger.info(
-                                f"Collection {collection_id} lock acquired after "
-                                f"{attempts[collection_id]} attempts ({waited:.2f}s)"
+                            lock_wait = t_start - first_deferred[collection_id]
+                            msg += (
+                                f" (lock acquired after {attempts[collection_id]} attempts, "
+                                f"{lock_wait:.2f}s waiting)"
                             )
+                        logger.debug(msg)
                     else:
                         if attempts[collection_id] == 1:
-                            first_deferred[collection_id] = time.monotonic()
-                            logger.info(f"Collection {collection_id} is locked elsewhere, deferring")
+                            first_deferred[collection_id] = t_start
                         pending.append((collection_id, data, buffer))
                 except _DeadlineExceeded:
                     if collection_id in first_deferred:
@@ -225,8 +235,6 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
 
     if failures:
         logger.warning(f"gap {'open' if delete else 'close'} completed with failures: {len(failures)} failed messages from {len(records_by_collection)} collections")
-    else:
-        logger.info(f"gap {'open' if delete else 'close'} completed successfully: {len(records_by_collection)} collections processed")
 
     return {
         "batchItemFailures": [{"itemIdentifier": message_id} for message_id in failures]
