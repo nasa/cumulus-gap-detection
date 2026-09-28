@@ -60,7 +60,6 @@ def _run_gap_transaction(
 
         if not acquired:
             conn.rollback()
-            logger.debug(f"Collection {collection_id} is locked elsewhere, deferring")
             return False
 
         cursor.execute(
@@ -129,11 +128,11 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
             monitored_collections = get_all_collections(conn)
 
             unmonitored_seen = set()
+            deletion_queue_arn = os.getenv("DELETION_QUEUE_ARN")
             for record in event["Records"]:
 
                 # Check which queue this event is from
-                if record["eventSourceARN"] == os.getenv("DELETION_QUEUE_ARN"):
-                    logger.debug("Adding gaps for deleted granules")
+                if record["eventSourceARN"] == deletion_queue_arn:
                     delete = True
                 r = json.loads(json.loads(record["body"])["Message"])["record"]
                 collection_id = r["collectionId"].replace(".", "_")
@@ -170,18 +169,42 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
                 (collection_id, data, build_buffer(data["records"]))
                 for collection_id, data in records_by_collection.items()
             )
+
+            attempts = defaultdict(int)
+            first_deferred = {}
+
             while pending:
                 collection_id, data, buffer = pending.popleft()
+                attempts[collection_id] += 1
                 try:
-                    logger.debug(f"Processing collection {collection_id} with {len(data['records'])} records")
+                    if attempts[collection_id] == 1:
+                        logger.debug(f"Processing collection {collection_id} with {len(data['records'])} records")
                     acquired = _run_gap_transaction(collection_id, buffer, conn, deadline, _open=delete)
-                    if not acquired:
+                    if acquired:
+                        if attempts[collection_id] > 1:
+                            waited = time.monotonic() - first_deferred[collection_id]
+                            logger.info(
+                                f"Collection {collection_id} lock acquired after "
+                                f"{attempts[collection_id]} attempts ({waited:.2f}s)"
+                            )
+                    else:
+                        if attempts[collection_id] == 1:
+                            first_deferred[collection_id] = time.monotonic()
+                            logger.info(f"Collection {collection_id} is locked elsewhere, deferring")
                         pending.append((collection_id, data, buffer))
                 except _DeadlineExceeded:
-                    logger.warning(
-                        f"Deadline reached on collection {collection_id}; deferring it and "
-                        f"{len(pending)} remaining collection(s) to batchItemFailures"
-                    )
+                    if collection_id in first_deferred:
+                        waited = time.monotonic() - first_deferred[collection_id]
+                        logger.warning(
+                            f"Deadline reached on collection {collection_id} after "
+                            f"{attempts[collection_id]} attempts ({waited:.2f}s waiting on lock); "
+                            f"deferring it and {len(pending)} remaining collection(s) to batchItemFailures"
+                        )
+                    else:
+                        logger.warning(
+                            f"Deadline reached on collection {collection_id}; deferring it and "
+                            f"{len(pending)} remaining collection(s) to batchItemFailures"
+                        )
                     failures.extend(data["message_ids"])
                     for _cid, d, _buf in pending:
                         failures.extend(d["message_ids"])
