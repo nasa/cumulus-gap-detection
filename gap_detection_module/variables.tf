@@ -47,13 +47,13 @@ variable "sqs_trigger_process_gaps_batch_size" {
 variable "sqs_trigger_max_batch_window" {
   description = "The maximum amount of time to gather records before invoking the function, in seconds"
   type        = string
-  default     = 30
+  default     = 60
 }
 
 variable "sqs_trigger_max_concurrency" {
   description = "The maximum number of concurrent executions the SQS event source can trigger"
   type        = string
-  default     = 4
+  default     = 64
 }
 
 variable "security_group_ids" {
@@ -160,4 +160,10 @@ variable "excluded_collection_id_prefixes" {
   type        = list(string)
   description = "Collection ID prefixes to exclude from ingest subscription"
   default     = []
+}
+
+variable "gap_update_lambda_timeout" {
+  description = "Timeout in seconds for the gapUpdate Lambda"
+  type        = number
+  default     = 60
 }

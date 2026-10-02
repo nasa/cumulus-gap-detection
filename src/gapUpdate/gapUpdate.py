@@ -3,6 +3,7 @@ import json
 import os
 import psycopg
 import logging
+from collections import defaultdict, deque
 from datetime import datetime
 from botocore.exceptions import ClientError
 import requests
@@ -12,36 +13,55 @@ from aws_lambda_typing import context as Context, events
 from psycopg.sql import SQL, Identifier, Literal
 from utils import get_db_connection, validate_environment_variables
 import traceback
+import time 
+import threading
+from psycopg import errors as pg_errors
 
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+CLEANUP_MARGIN_SECONDS = float(os.getenv("CLEANUP_MARGIN_SECONDS", "1"))
+
+class _DeadlineExceeded(Exception):
+    """Raised when the invocation's cleanup margin is reached"""
 
 
-def validate_collections(collections: Set[str], conn) -> bool:
-    """Verifies that all given collections are in collections table.
-    Args:
-        collections (set): A set of collection IDs to check and potentially initialize.
-        conn (psycopg.Connection): An active database connection.
+logger = logging.getLogger(__name__)
+logger.setLevel(os.getenv("LOG_LEVEL", "INFO").upper())
 
-    Returns true if all input collections are in collections table and false otherwise.
-    """
+_MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _load_sql(filename: str) -> str:
+    with open(os.path.join(_MODULE_DIR, filename)) as f:
+        return f.read()
+
+
+CLOSE_GAPS_QUERY = _load_sql("close_gaps.sql")
+OPEN_GAPS_QUERY = _load_sql("open_gaps.sql")
+
+
+def get_all_collections(conn) -> Set[str]:
     with conn.cursor() as cur:
-        cur.execute(
-            f"SELECT collection_id FROM collections WHERE collection_id IN ({','.join(['%s'] * len(collections))})",
-            tuple(collections),
-        )
-        found = {row[0] for row in cur.fetchall()}
-        missing = collections - found
-        if missing:
-            logger.error(f"Collections not in table: {missing}")
-        return not missing
+        cur.execute("SELECT collection_id FROM collections")
+        return {row[0] for row in cur.fetchall()}
 
 
-def update_gaps(
-    collection_id, records_buffer: StringIO, update_query, conn: psycopg.Connection
-) -> None:
+def _run_gap_transaction(
+    collection_id, records_buffer: StringIO, conn: psycopg.Connection,
+    deadline: float, _open: bool = False
+) -> bool:
+    query = OPEN_GAPS_QUERY if _open else CLOSE_GAPS_QUERY
+    cursor = conn.cursor()
+
+    if deadline - time.monotonic() <= 0:
+        raise _DeadlineExceeded(collection_id)
     try:
-        cursor = conn.cursor()
+        # Aqcuire lock to prevent races across concurrent executions.
+        cursor.execute("SELECT pg_try_advisory_xact_lock(hashtext(%s))", (collection_id,))
+        acquired = cursor.fetchone()[0]
+
+        if not acquired:
+            conn.rollback()
+            return False
+
         cursor.execute(
             """
             CREATE TEMP TABLE input_records(
@@ -52,90 +72,13 @@ def update_gaps(
         )
         with cursor.copy("COPY input_records FROM STDIN WITH DELIMITER '\t'") as copy:
             copy.write(records_buffer.read())
-        # Lock collection and perform update procedure
-        cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (collection_id,))
-        cursor.execute(update_query)
+        cursor.execute(query, {"collection_id": collection_id})
         conn.commit()
-        logger.debug(f"Transaction committed for collection {collection_id}")
-    except Exception as e:
-        # Rollback on error
+        return True
+    except pg_errors.QueryCanceled:
         conn.rollback()
-        logger.error(f"Error processing collection {collection_id}: {str(e)}")
-        logger.debug(traceback.format_exc())
-        raise e
-    finally:
-        cursor.close()
-
-def add_gaps(
-    collection_id, records_buffer: StringIO, conn: psycopg.Connection
-) -> None:
-    try:
-        cursor = conn.cursor()
-        # Load event records
-        cursor.execute(
-            """
-            CREATE TEMP TABLE input_records(
-                collection_id text,
-                start_ts timestamp,
-                end_ts timestamp) ON COMMIT DROP
-        """
-        )
-        with cursor.copy("COPY input_records FROM STDIN WITH DELIMITER '\t'") as copy:
-            copy.write(records_buffer.read())
-
-        # Prevent races across concurrent executions
-        cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (collection_id,))
-
-       # Check for deletions on existing gaps
-        cursor.execute("""
-            SELECT 
-                ir.start_ts as granule_start,
-                ir.end_ts as granule_end,
-                gaps.start_ts as gap_start,
-                gaps.end_ts as gap_end
-            FROM gaps, input_records ir 
-            WHERE gaps.collection_id = ir.collection_id 
-              AND tsrange(gaps.start_ts, gaps.end_ts) && 
-                  tsrange(ir.start_ts, date_trunc('second', ir.end_ts) + interval '1 second')
-        """)
-        
-        overlaps = cursor.fetchall()
-        if overlaps:
-            logger.warning(f"Deletion overlap detected for {collection_id}: {len(overlaps)} deleted granules overlap existing gaps")
-            logger.debug(f"Overlap details for {collection_id}: " + 
-                        ", ".join([f"granule[{o[0]}, {o[1]}] overlaps gap[{o[2]}, {o[3]}]" for o in overlaps]))
-        
-        # Add gaps for deleted granules and merge with existing gaps
-        cursor.execute("""
-            -- Round granule end time up to nearest second to eliminate boundary gaps
-            WITH input_ranges AS (
-                SELECT collection_id, tsrange(start_ts, date_trunc('second', end_ts) + interval '1 second') as gap_range
-                FROM input_records
-            ),
-
-            -- Remove adjacent existing gaps
-            removed_gaps AS (
-                DELETE FROM gaps WHERE gap_id IN (
-                    SELECT gap_id FROM gaps, input_ranges 
-                    WHERE gaps.collection_id = input_ranges.collection_id 
-                    AND (tsrange(gaps.start_ts, gaps.end_ts) && input_ranges.gap_range 
-                         OR tsrange(gaps.start_ts, gaps.end_ts) -|- input_ranges.gap_range)
-                ) RETURNING collection_id, tsrange(start_ts, end_ts) as gap_range
-            ),
-            -- Merge new gaps with existing gaps
-            all_ranges AS (
-                SELECT collection_id, gap_range FROM input_ranges
-                UNION ALL SELECT collection_id, gap_range FROM removed_gaps
-            )
-            INSERT INTO gaps (collection_id, start_ts, end_ts)
-            SELECT collection_id, lower(merged_range), upper(merged_range) 
-            FROM (SELECT collection_id, unnest(range_agg(gap_range)) merged_range 
-                  FROM all_ranges GROUP BY collection_id) final_ranges
-        """)
-        
-        conn.commit()
-        logger.debug(f"Added gaps to collection {collection_id}")
-        
+        logger.warning(f"Cancelled processing collection {collection_id}: cleanup margin reached")
+        raise _DeadlineExceeded(collection_id)
     except Exception as e:
         conn.rollback()
         logger.error(f"Error processing collection {collection_id}: {str(e)}")
@@ -154,79 +97,145 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
     Returns:
         dict: HTTP response with status code 200 on success or error status.
     """
+
     validate_environment_variables(
         ["RDS_SECRET", "RDS_PROXY_HOST", "CMR_ENV", "AWS_REGION", "DELETION_QUEUE_ARN"]
     )
-    delete = False
-    # Parse records and group by collection
-    records_by_collection = {}
-    all_collections = set()
-    
-    for record in event["Records"]:
-        # Check which queue this event is from 
-        if record["eventSourceARN"] == os.getenv("DELETION_QUEUE_ARN"):
-            logger.debug("Adding gaps for deleted granules")
-            delete = True
-        r = json.loads(json.loads(record["body"])["Message"])["record"]
-        collection_id = r["collectionId"].replace(".", "_")
 
-        # Initialize empty key if first record from collection this batch
-        if collection_id not in records_by_collection:
-            records_by_collection[collection_id] = {"records": [], "message_ids": []}
+    # deadline for the invocation at which point we abort remaining work
+    deadline = time.monotonic() + (context.get_remaining_time_in_millis() / 1000.0) - CLEANUP_MARGIN_SECONDS
 
-        records_by_collection[collection_id]["records"].append(
-            {
-                "collection_id": collection_id,
-                "start_ts": r["beginningDateTime"],
-                "end_ts": r["endingDateTime"],
-            }
-        )
-        records_by_collection[collection_id]["message_ids"].append(record["messageId"])
-        all_collections.add(collection_id)
-    
-    total_records = sum(len(recs["records"]) for recs in records_by_collection.values())
-    operation_type = "gap addition" if delete else "gap update"
-    logger.info(f"Processing {operation_type}: {total_records} records across {len(all_collections)} collections")
-
+    all_message_ids = [record["messageId"] for record in event["Records"]]
     failures = []
-    with get_db_connection() as conn:
-        # Load update query
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        query_path = os.path.join(current_dir, "update_gaps.sql")
-        with open(query_path) as f:
-            update_query = f.read()
 
-        # Process each collection in a dedicated transaction to facilitate parallelism
-        for collection_id, data in records_by_collection.items():
-            try:
-                # Verify this collection has been initialized
-                if not validate_collections({collection_id}, conn):
-                    failures.extend(data["message_ids"])
+    with get_db_connection() as conn:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            logger.warning("Deadline already reached after acquiring connection; failing entire batch")
+            return {"batchItemFailures": [{"itemIdentifier": mid} for mid in all_message_ids]}
+
+        timer = threading.Timer(remaining, conn.cancel_safe)
+        timer.daemon = True
+        timer.start()
+
+        pending = deque()
+        records_by_collection = defaultdict(lambda: {"records": [], "message_ids": []})
+        delete = False
+
+        try:
+             # Fetch all monitored collections
+            monitored_collections = get_all_collections(conn)
+
+            unmonitored_counts = defaultdict(int)
+            deletion_queue_arn = os.getenv("DELETION_QUEUE_ARN")
+            for record in event["Records"]:
+
+                # Check which queue this event is from
+                if record["eventSourceARN"] == deletion_queue_arn:
+                    delete = True
+                r = json.loads(json.loads(record["body"])["Message"])["record"]
+                collection_id = r["collectionId"].replace(".", "_")
+
+                if collection_id not in monitored_collections:
+                    unmonitored_counts[collection_id] += 1
                     continue
 
-                logger.debug(f"Processing collection {collection_id} with {len(data["records"])} records")
+                records_by_collection[collection_id]["records"].append(
+                    {
+                        "collection_id": collection_id,
+                        "start_ts": r["beginningDateTime"],
+                        "end_ts": r["endingDateTime"],
+                    }
+                )
+                records_by_collection[collection_id]["message_ids"].append(record["messageId"])
+
+            total_records = sum(len(data["records"]) for data in records_by_collection.values())
+            breakdown = ", ".join(
+                f"{cid}={len(data['records'])}" for cid, data in sorted(records_by_collection.items())
+            )
+            summary = (
+                f"Processing gap {'open' if delete else 'close'}: {total_records} records across "
+                f"{len(records_by_collection)} monitored collections"
+            )
+            if breakdown:
+                summary += f" [{breakdown}]"
+            if unmonitored_counts:
+                skipped = ", ".join(f"{cid}={n}" for cid, n in sorted(unmonitored_counts.items()))
+                summary += f"; skipped unmonitored: [{skipped}]"
+            logger.info(summary)
+
+            def build_buffer(records):
                 buffer = StringIO()
-                for r in data["records"]:
-                    line = f"{r['collection_id']}\t{r['start_ts']}\t{r['end_ts']}\n"
-                    buffer.write(line)
+                for r in records:
+                    buffer.write(f"{r['collection_id']}\t{r['start_ts']}\t{r['end_ts']}\n")
                 buffer.seek(0)
-                
-                if delete:
-                    add_gaps(collection_id, buffer, conn)
-                else:
-                    update_gaps(collection_id, buffer, update_query, conn)
+                return buffer
 
-            except Exception as e:
-                logger.error(f"Failed to process collection {collection_id}: {str(e)}")
-                failures.extend(data["message_ids"])
+            pending.extend(
+                (collection_id, data, build_buffer(data["records"]))
+                for collection_id, data in records_by_collection.items()
+            )
 
-    # Summary logging
+            attempts = defaultdict(int)
+            first_deferred = {}
+
+            while pending:
+                collection_id, data, buffer = pending.popleft()
+                attempts[collection_id] += 1
+                try:
+                    t_start = time.monotonic()
+                    acquired = _run_gap_transaction(collection_id, buffer, conn, deadline, _open=delete)
+                    if acquired:
+                        txn_ms = (time.monotonic() - t_start) * 1000
+                        msg = (
+                            f"Collection {collection_id}: {len(data['records'])} records, "
+                            f"transaction committed in {txn_ms:.0f}ms"
+                        )
+                        if attempts[collection_id] > 1:
+                            lock_wait = t_start - first_deferred[collection_id]
+                            msg += (
+                                f" (lock acquired after {attempts[collection_id]} attempts, "
+                                f"{lock_wait:.2f}s waiting)"
+                            )
+                        logger.debug(msg)
+                    else:
+                        if attempts[collection_id] == 1:
+                            first_deferred[collection_id] = t_start
+                        pending.append((collection_id, data, buffer))
+                except _DeadlineExceeded:
+                    if collection_id in first_deferred:
+                        waited = time.monotonic() - first_deferred[collection_id]
+                        logger.warning(
+                            f"Deadline reached on collection {collection_id} after "
+                            f"{attempts[collection_id]} attempts ({waited:.2f}s waiting on lock); "
+                            f"deferring it and {len(pending)} remaining collection(s) to batchItemFailures"
+                        )
+                    else:
+                        logger.warning(
+                            f"Deadline reached on collection {collection_id}; deferring it and "
+                            f"{len(pending)} remaining collection(s) to batchItemFailures"
+                        )
+                    failures.extend(data["message_ids"])
+                    for _cid, d, _buf in pending:
+                        failures.extend(d["message_ids"])
+                    pending.clear()
+                    raise
+                except Exception as e:
+                    logger.error(f"Failed to process collection {collection_id}: {str(e)}")
+                    failures.extend(data["message_ids"])
+
+        except pg_errors.QueryCanceled:
+            conn.rollback()
+            logger.warning("Deadline reached during collection lookup; failing entire batch")
+            return {"batchItemFailures": [{"itemIdentifier": mid} for mid in all_message_ids]}
+        except _DeadlineExceeded:
+            pass
+        finally:
+            timer.cancel()
+
     if failures:
-        logger.warning(f"{operation_type} completed with failures: {len(failures)} failed messages from {len(all_collections)} collections")
-    else:
-        logger.info(f"{operation_type} completed successfully: {len(all_collections)} collections processed")
+        logger.warning(f"gap {'open' if delete else 'close'} completed with failures: {len(failures)} failed messages from {len(records_by_collection)} collections")
 
-    # Return failed messages to the queue
     return {
         "batchItemFailures": [{"itemIdentifier": message_id} for message_id in failures]
     }

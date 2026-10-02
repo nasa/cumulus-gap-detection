@@ -79,29 +79,18 @@ resource "aws_lambda_event_source_mapping" "ingest_sqs_trigger" {
 
 # gapDetectionDeletionQueue trigger for gapUpdate lambda function
 resource "aws_lambda_event_source_mapping" "deletion_sqs_trigger" {
-
   event_source_arn = aws_sqs_queue.gap_detection_deletion_queue.arn
-
   function_name = aws_lambda_function.gap_functions["gapUpdate"].arn
-
   function_response_types = ["ReportBatchItemFailures"]
 
   # TODO Refine params
-
   batch_size = var.sqs_trigger_process_gaps_batch_size
-
   maximum_batching_window_in_seconds = var.sqs_trigger_max_batch_window
-
   # Allows valid collections to be processed from batch containing invalid collections
-
   # Prevent over-invocation to avoid contention
-
   scaling_config {
-
     maximum_concurrency = var.sqs_trigger_max_concurrency
-
   }
-
 }
 
 # Allow lambda role to connect to RDS proxy

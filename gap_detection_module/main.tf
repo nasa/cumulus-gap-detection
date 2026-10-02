@@ -22,8 +22,8 @@ locals {
         ]
   gap_functions = {
     gapUpdate = {
-      timeout     = 30
-      memory_size = 512
+      timeout     = var.gap_update_lambda_timeout
+      memory_size = 256
       variables = {
         LOG_LEVEL          = var.log_level
         RDS_SECRET         = aws_secretsmanager_secret.rds_admin_login.name

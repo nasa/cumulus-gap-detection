@@ -1,20 +1,20 @@
 -- Load set of input intervals from temp table
 WITH input AS (
-  -- Define range as exlusive to end_ts rounded up to the second to remove boundary gaps
-  SELECT collection_id, range_agg(tsrange(start_ts, date_trunc('second', end_ts) + interval '1 second')) input_sets
+  -- Define range as exclusive to end_ts rounded up to the second to remove boundary gaps
+  SELECT %(collection_id)s AS collection_id, range_agg(tsrange(start_ts, date_trunc('second', end_ts) + interval '1 second')) input_sets
   FROM input_records 
-  GROUP BY collection_id
+  WHERE collection_id = %(collection_id)s
 ),
 
 -- Existing gaps that intersect with input intervals are deleted
 deleted_gaps AS (
     DELETE FROM gaps
-    WHERE EXISTS (
+    WHERE collection_id = %(collection_id)s
+    AND EXISTS (
         SELECT 1
         FROM input
-        WHERE input.collection_id = gaps.collection_id
         -- Set intersection between current gaps and input intervals
-        AND tsrange(start_ts, end_ts) && input.input_sets
+        WHERE tsrange(gaps.start_ts, gaps.end_ts) && input.input_sets
     )
     RETURNING collection_id, tsrange(start_ts, end_ts) as target_gaps
 ),
