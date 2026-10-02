@@ -6,7 +6,7 @@ resource "aws_sqs_queue" "gap_dlq" {
 
 resource "aws_sqs_queue" "gap_detection_ingest_queue" {
   name                       = "${var.DEPLOY_NAME}-gapDetectionIngestQueue"
-  visibility_timeout_seconds = 360
+  visibility_timeout_seconds = 420
   message_retention_seconds  = 1209600
   sqs_managed_sse_enabled    = true
   receive_wait_time_seconds  = 20
@@ -65,7 +65,7 @@ resource "aws_sqs_queue" "gap_deletion_dlq" {
 
 resource "aws_sqs_queue" "gap_detection_deletion_queue" {
   name                       = "${var.DEPLOY_NAME}-gapDetectionDeletionQueue"
-  visibility_timeout_seconds = 360
+  visibility_timeout_seconds = 420
   message_retention_seconds  = 1209600
   sqs_managed_sse_enabled    = true
   receive_wait_time_seconds  = 20
