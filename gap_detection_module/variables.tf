@@ -161,3 +161,9 @@ variable "excluded_collection_id_prefixes" {
   description = "Collection ID prefixes to exclude from ingest subscription"
   default     = []
 }
+
+variable "gap_update_lambda_timeout" {
+  description = "Timeout in seconds for the gapUpdate Lambda"
+  type        = number
+  default     = 60
+}
