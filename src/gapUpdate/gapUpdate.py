@@ -123,31 +123,49 @@ def lambda_handler(event: events.SQSEvent, context: Context) -> Dict[str, Any]:
         delete = False
 
         try:
-             # Fetch all monitored collections
+            # Fetch all monitored collections
             monitored_collections = get_all_collections(conn)
 
             unmonitored_counts = defaultdict(int)
             deletion_queue_arn = os.getenv("DELETION_QUEUE_ARN")
             for record in event["Records"]:
+                message_id = record["messageId"]
 
                 # Check which queue this event is from
                 if record["eventSourceARN"] == deletion_queue_arn:
                     delete = True
-                r = json.loads(json.loads(record["body"])["Message"])["record"]
-                collection_id = r["collectionId"].replace(".", "_")
+
+                # Validate each record
+                try:
+                    r = json.loads(json.loads(record["body"])["Message"])["record"]
+                    collection_id = r["collectionId"].replace(".", "_")
+                except (KeyError, TypeError, ValueError, AttributeError) as e:
+                    logger.error(f"Malformed record {message_id}: {e!r}")
+                    failures.append(message_id)
+                    continue
 
                 if collection_id not in monitored_collections:
                     unmonitored_counts[collection_id] += 1
                     continue
 
+                start_ts = r.get("beginningDateTime")
+                end_ts = r.get("endingDateTime")
+                if not start_ts or not end_ts:
+                    logger.error(
+                        f"Malformed record {message_id} for {collection_id}: "
+                        f"missing or empty beginningDateTime/endingDateTime"
+                    )
+                    failures.append(message_id)
+                    continue
+
                 records_by_collection[collection_id]["records"].append(
                     {
                         "collection_id": collection_id,
-                        "start_ts": r["beginningDateTime"],
-                        "end_ts": r["endingDateTime"],
+                        "start_ts": start_ts,
+                        "end_ts": end_ts,
                     }
                 )
-                records_by_collection[collection_id]["message_ids"].append(record["messageId"])
+                records_by_collection[collection_id]["message_ids"].append(message_id)
 
             total_records = sum(len(data["records"]) for data in records_by_collection.values())
             breakdown = ", ".join(
